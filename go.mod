@@ -1,4 +1,4 @@
-module github.com/devlongs/gean
+module github.com/developerlongs/gean
 
 go 1.23.0
 

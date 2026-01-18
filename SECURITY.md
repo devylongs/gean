@@ -2,4 +2,4 @@
 
 ## Report a Vulnerability
 
-Contact [devlongs@gmail.com](mailto:devlongs@gmail.com).
+Contact [developerlongs@gmail.com](mailto:developerlongs@gmail.com).
