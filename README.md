@@ -31,7 +31,7 @@ Core type system and SSZ serialization - the bedrock everything else builds on.
 
 - [x] Core primitive types (Slot, Epoch, Root, ValidatorIndex)
 - [x] Byte array types (Bytes4, Bytes20, Bytes32, Bytes48, Bytes52, Bytes96)
-- [x] SSZ collections (Bitlist, Bitvector)
+- [x] SSZ bitfields via `[]byte` with fastssz tags
 - [x] SSZ serialization and merkleization
 - [x] `HashTreeRoot()` implementation
 
