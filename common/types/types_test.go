@@ -101,3 +101,130 @@ func TestCheckpointHashTreeRoot(t *testing.T) {
 		t.Error("hash tree root should be deterministic")
 	}
 }
+
+func TestConfigSSZRoundTrip(t *testing.T) {
+	original := &Config{GenesisTime: 1700000000}
+
+	data, err := original.MarshalSSZ()
+	if err != nil {
+		t.Fatalf("MarshalSSZ failed: %v", err)
+	}
+	if len(data) != 8 {
+		t.Errorf("expected 8 bytes, got %d", len(data))
+	}
+
+	decoded := &Config{}
+	if err := decoded.UnmarshalSSZ(data); err != nil {
+		t.Fatalf("UnmarshalSSZ failed: %v", err)
+	}
+	if decoded.GenesisTime != original.GenesisTime {
+		t.Errorf("GenesisTime mismatch")
+	}
+}
+
+func TestValidatorSSZRoundTrip(t *testing.T) {
+	original := &Validator{
+		Pubkey: Bytes52{0x01, 0x02, 0x03},
+		Index:  42,
+	}
+
+	data, err := original.MarshalSSZ()
+	if err != nil {
+		t.Fatalf("MarshalSSZ failed: %v", err)
+	}
+	if len(data) != 60 {
+		t.Errorf("expected 60 bytes, got %d", len(data))
+	}
+
+	decoded := &Validator{}
+	if err := decoded.UnmarshalSSZ(data); err != nil {
+		t.Fatalf("UnmarshalSSZ failed: %v", err)
+	}
+	if !bytes.Equal(decoded.Pubkey[:], original.Pubkey[:]) {
+		t.Errorf("Pubkey mismatch")
+	}
+	if decoded.Index != original.Index {
+		t.Errorf("Index mismatch")
+	}
+}
+
+func TestAttestationDataSSZRoundTrip(t *testing.T) {
+	original := &AttestationData{
+		Slot:   100,
+		Head:   Checkpoint{Root: Root{0x01}, Slot: 99},
+		Target: Checkpoint{Root: Root{0x02}, Slot: 98},
+		Source: Checkpoint{Root: Root{0x03}, Slot: 97},
+	}
+
+	data, err := original.MarshalSSZ()
+	if err != nil {
+		t.Fatalf("MarshalSSZ failed: %v", err)
+	}
+	if len(data) != 128 {
+		t.Errorf("expected 128 bytes, got %d", len(data))
+	}
+
+	decoded := &AttestationData{}
+	if err := decoded.UnmarshalSSZ(data); err != nil {
+		t.Fatalf("UnmarshalSSZ failed: %v", err)
+	}
+	if decoded.Slot != original.Slot {
+		t.Errorf("Slot mismatch")
+	}
+	if decoded.Head.Slot != original.Head.Slot {
+		t.Errorf("Head.Slot mismatch")
+	}
+}
+
+func TestBlockSSZRoundTrip(t *testing.T) {
+	original := &Block{
+		Slot:          100,
+		ProposerIndex: 5,
+		ParentRoot:    Root{0xaa},
+		StateRoot:     Root{0xbb},
+		Body: BlockBody{
+			Attestations: []AggregatedAttestation{},
+		},
+	}
+
+	data, err := original.MarshalSSZ()
+	if err != nil {
+		t.Fatalf("MarshalSSZ failed: %v", err)
+	}
+
+	decoded := &Block{}
+	if err := decoded.UnmarshalSSZ(data); err != nil {
+		t.Fatalf("UnmarshalSSZ failed: %v", err)
+	}
+	if decoded.Slot != original.Slot {
+		t.Errorf("Slot mismatch")
+	}
+	if decoded.ProposerIndex != original.ProposerIndex {
+		t.Errorf("ProposerIndex mismatch")
+	}
+}
+
+func TestBlockHeaderHashTreeRoot(t *testing.T) {
+	header := &BlockHeader{
+		Slot:          100,
+		ProposerIndex: 5,
+		ParentRoot:    Root{0xaa},
+		StateRoot:     Root{0xbb},
+		BodyRoot:      Root{0xcc},
+	}
+
+	root, err := header.HashTreeRoot()
+	if err != nil {
+		t.Fatalf("HashTreeRoot failed: %v", err)
+	}
+
+	var zeroRoot [32]byte
+	if root == zeroRoot {
+		t.Error("hash tree root should not be zero")
+	}
+
+	root2, _ := header.HashTreeRoot()
+	if root != root2 {
+		t.Error("hash tree root should be deterministic")
+	}
+}
