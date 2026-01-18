@@ -40,15 +40,18 @@ type Checkpoint struct {
 	Slot Slot `ssz-size:"8"`
 }
 
+// Config holds chain configuration parameters.
 type Config struct {
 	GenesisTime uint64 `ssz-size:"8"`
 }
 
+// Validator represents a validator's metadata.
 type Validator struct {
 	Pubkey Bytes52 `ssz-size:"52"`
 	Index  uint64  `ssz-size:"8"`
 }
 
+// AttestationData describes a validator's view of the chain.
 type AttestationData struct {
 	Slot   Slot `ssz-size:"8"`
 	Head   Checkpoint
@@ -56,16 +59,19 @@ type AttestationData struct {
 	Source Checkpoint
 }
 
+// Attestation is a single validator's attestation.
 type Attestation struct {
 	ValidatorID uint64 `ssz-size:"8"`
 	Data        AttestationData
 }
 
+// AggregatedAttestation combines multiple validators' attestations.
 type AggregatedAttestation struct {
 	AggregationBits []byte `ssz-max:"4096" ssz:"bitlist"` // ValidatorRegistryLimit
 	Data            AttestationData
 }
 
+// BlockHeader summarizes a block without the body.
 type BlockHeader struct {
 	Slot          Slot   `ssz-size:"8"`
 	ProposerIndex uint64 `ssz-size:"8"`
@@ -74,10 +80,12 @@ type BlockHeader struct {
 	BodyRoot      Root   `ssz-size:"32"`
 }
 
+// BlockBody contains the block's payload.
 type BlockBody struct {
 	Attestations []AggregatedAttestation `ssz-max:"4096"` // ValidatorRegistryLimit
 }
 
+// Block is a complete block including header fields and body.
 type Block struct {
 	Slot          Slot   `ssz-size:"8"`
 	ProposerIndex uint64 `ssz-size:"8"`
@@ -86,15 +94,16 @@ type Block struct {
 	Body          BlockBody
 }
 
+// State is the beacon state.
 type State struct {
-	Config                   Config
-	Slot                     Slot `ssz-size:"8"`
-	LatestBlockHeader        BlockHeader
-	LatestJustified          Checkpoint
-	LatestFinalized          Checkpoint
-	HistoricalBlockHashes    []Root      `ssz-max:"262144"`                   // HistoricalRootsLimit
-	JustifiedSlots           []byte      `ssz-max:"262144" ssz:"bitlist"`     // HistoricalRootsLimit
-	Validators               []Validator `ssz-max:"4096"`                     // ValidatorRegistryLimit
-	JustificationsRoots      []Root      `ssz-max:"262144"`                   // HistoricalRootsLimit
-	JustificationsValidators []byte      `ssz-max:"1073741824" ssz:"bitlist"` // 2^30 (262144 × 4096)
+	Config             Config
+	Slot               Slot `ssz-size:"8"`
+	LatestBlockHeader  BlockHeader
+	LatestJustified    Checkpoint
+	LatestFinalized    Checkpoint
+	HistoricalRoots    []Root      `ssz-max:"262144"`                    // HistoricalRootsLimit
+	JustifiedSlots     []byte      `ssz-max:"262144" ssz:"bitlist"`      // HistoricalRootsLimit
+	Validators         []Validator `ssz-max:"4096"`                      // ValidatorRegistryLimit
+	JustificationRoots []Root      `ssz-max:"262144"`                    // HistoricalRootsLimit
+	JustificationVotes []byte      `ssz-max:"1073741824" ssz:"bitlist"` // 2^30 (262144 × 4096)
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/developerlongs/gean/common/types"
+	"github.com/developerlongs/gean/types"
 )
 
 func main() {
