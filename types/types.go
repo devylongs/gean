@@ -16,8 +16,10 @@ type Bytes96 [96]byte
 
 const (
 	SecondsPerSlot         uint64 = 4
-	HistoricalRootsLimit   uint64 = 262144 // 2^18
-	ValidatorRegistryLimit uint64 = 4096   // 2^12
+	IntervalsPerSlot       uint64 = 4
+	SecondsPerInterval     uint64 = SecondsPerSlot / IntervalsPerSlot // 1
+	HistoricalRootsLimit   uint64 = 262144                            // 2^18
+	ValidatorRegistryLimit uint64 = 4096                              // 2^12
 )
 
 func (r Root) IsZero() bool {
