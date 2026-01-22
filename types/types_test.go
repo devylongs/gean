@@ -278,3 +278,113 @@ func TestBlockHeaderHashTreeRoot(t *testing.T) {
 		t.Error("hash tree root should be deterministic")
 	}
 }
+
+func TestSlotIsJustifiableAfter(t *testing.T) {
+	tests := []struct {
+		slot      Slot
+		finalized Slot
+		want      bool
+		desc      string
+	}{
+		// Rule 1: delta <= 5
+		{0, 0, true, "delta=0"},
+		{1, 0, true, "delta=1"},
+		{5, 0, true, "delta=5"},
+
+		// Rule 2: Perfect squares (delta = 9, 16, 25, 36, 49, 64, 81, 100)
+		{9, 0, true, "delta=9 (3^2)"},
+		{16, 0, true, "delta=16 (4^2)"},
+		{25, 0, true, "delta=25 (5^2)"},
+		{36, 0, true, "delta=36 (6^2)"},
+		{100, 0, true, "delta=100 (10^2)"},
+
+		// Rule 3: Pronic numbers (x*(x+1): 6, 12, 20, 30, 42, 56, 72, 90, 110)
+		{6, 0, true, "delta=6 (2*3)"},
+		{12, 0, true, "delta=12 (3*4)"},
+		{20, 0, true, "delta=20 (4*5)"},
+		{30, 0, true, "delta=30 (5*6)"},
+		{42, 0, true, "delta=42 (6*7)"},
+		{56, 0, true, "delta=56 (7*8)"},
+		{72, 0, true, "delta=72 (8*9)"},
+		{90, 0, true, "delta=90 (9*10)"},
+		{110, 0, true, "delta=110 (10*11)"},
+
+		// Non-justifiable slots
+		{7, 0, false, "delta=7 (not square, not pronic)"},
+		{8, 0, false, "delta=8 (not square, not pronic)"},
+		{10, 0, false, "delta=10 (not square, not pronic)"},
+		{11, 0, false, "delta=11 (not square, not pronic)"},
+		{13, 0, false, "delta=13 (not square, not pronic)"},
+		{15, 0, false, "delta=15 (not square, not pronic)"},
+		{17, 0, false, "delta=17 (not square, not pronic)"},
+
+		// With non-zero finalized slot
+		{10, 5, true, "delta=5 with finalized=5"},
+		{14, 5, true, "delta=9 (3^2) with finalized=5"},
+		{11, 5, true, "delta=6 (2*3) with finalized=5"},
+		{12, 5, false, "delta=7 with finalized=5"},
+
+		// Slot before finalized (should return false)
+		{5, 10, false, "slot before finalized"},
+	}
+
+	for _, tt := range tests {
+		got := tt.slot.IsJustifiableAfter(tt.finalized)
+		if got != tt.want {
+			t.Errorf("%s: Slot(%d).IsJustifiableAfter(%d) = %v, want %v",
+				tt.desc, tt.slot, tt.finalized, got, tt.want)
+		}
+	}
+}
+
+func TestIsProposer(t *testing.T) {
+	tests := []struct {
+		validatorIndex ValidatorIndex
+		slot           Slot
+		numValidators  uint64
+		want           bool
+		desc           string
+	}{
+		// Basic round-robin
+		{0, 0, 4, true, "validator 0 at slot 0"},
+		{1, 1, 4, true, "validator 1 at slot 1"},
+		{2, 2, 4, true, "validator 2 at slot 2"},
+		{3, 3, 4, true, "validator 3 at slot 3"},
+		{0, 4, 4, true, "validator 0 at slot 4 (wraps)"},
+		{1, 5, 4, true, "validator 1 at slot 5 (wraps)"},
+
+		// Non-proposer cases
+		{0, 1, 4, false, "validator 0 at slot 1"},
+		{1, 0, 4, false, "validator 1 at slot 0"},
+		{2, 5, 4, false, "validator 2 at slot 5"},
+
+		// Edge cases
+		{0, 0, 1, true, "single validator always proposes"},
+		{0, 100, 1, true, "single validator at slot 100"},
+		{0, 0, 0, false, "zero validators"},
+	}
+
+	for _, tt := range tests {
+		got := IsProposer(tt.validatorIndex, tt.slot, tt.numValidators)
+		if got != tt.want {
+			t.Errorf("%s: IsProposer(%d, %d, %d) = %v, want %v",
+				tt.desc, tt.validatorIndex, tt.slot, tt.numValidators, got, tt.want)
+		}
+	}
+}
+
+func TestIsPerfectSquare(t *testing.T) {
+	squares := []uint64{0, 1, 4, 9, 16, 25, 36, 49, 64, 81, 100, 121, 144}
+	for _, n := range squares {
+		if !isPerfectSquare(n) {
+			t.Errorf("isPerfectSquare(%d) = false, want true", n)
+		}
+	}
+
+	nonSquares := []uint64{2, 3, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 17, 99, 101}
+	for _, n := range nonSquares {
+		if isPerfectSquare(n) {
+			t.Errorf("isPerfectSquare(%d) = true, want false", n)
+		}
+	}
+}

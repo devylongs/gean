@@ -32,6 +32,71 @@ func TimeToSlot(time, genesisTime uint64) Slot {
 	return Slot((time - genesisTime) / SecondsPerSlot)
 }
 
+// IsJustifiableAfter checks if this slot is a valid justification target
+// after a given finalized slot, according to 3SF-mini rules.
+//
+// A slot is justifiable if delta (distance from finalized slot) is:
+//   - <= 5 (first few slots always justifiable)
+//   - A perfect square (9, 16, 25, 36...)
+//   - A pronic number (x*(x+1): 6, 12, 20, 30, 42...)
+func (s Slot) IsJustifiableAfter(finalizedSlot Slot) bool {
+	if s < finalizedSlot {
+		return false
+	}
+
+	delta := uint64(s - finalizedSlot)
+
+	// Rule 1: First few slots are always justifiable
+	if delta <= 5 {
+		return true
+	}
+
+	// Rule 2: Perfect square check
+	if isPerfectSquare(delta) {
+		return true
+	}
+
+	// Rule 3: Pronic number check (x*(x+1))
+	// n is pronic if 4n+1 is a perfect square
+	if isPerfectSquare(4*delta + 1) {
+		return true
+	}
+
+	return false
+}
+
+// isPerfectSquare returns true if n is a perfect square.
+func isPerfectSquare(n uint64) bool {
+	if n == 0 {
+		return true
+	}
+	root := isqrt(n)
+	return root*root == n
+}
+
+// isqrt computes the integer square root of n.
+func isqrt(n uint64) uint64 {
+	if n == 0 {
+		return 0
+	}
+	x := n
+	y := (x + 1) / 2
+	for y < x {
+		x = y
+		y = (x + n/x) / 2
+	}
+	return x
+}
+
+// IsProposer returns true if the validator is the proposer for the given slot.
+// Uses round-robin selection: slot % numValidators == validatorIndex.
+func IsProposer(validatorIndex ValidatorIndex, slot Slot, numValidators uint64) bool {
+	if numValidators == 0 {
+		return false
+	}
+	return uint64(slot)%numValidators == uint64(validatorIndex)
+}
+
 // Checkpoint represents a justified or finalized checkpoint.
 type Checkpoint struct {
 	Root Root `ssz-size:"32"`

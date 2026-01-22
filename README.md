@@ -37,13 +37,13 @@ Align SSZ containers with leanSpec devnet 0 specification.
 - [x] Regenerate SSZ encoding code
 - [x] Update tests
 
-### Milestone 2: Consensus Helpers ⬜
+### Milestone 2: Consensus Helpers ✅
 
 Implement core consensus helper functions.
 
-- [ ] `Slot.IsJustifiableAfter()` - 3SF-mini justification rules
-- [ ] `IsProposer()` - Round-robin proposer selection
-- [ ] Genesis state generation aligned with spec
+- [x] `Slot.IsJustifiableAfter()` - 3SF-mini justification rules
+- [x] `IsProposer()` - Round-robin proposer selection
+- [x] Genesis state generation aligned with spec
 
 ### Milestone 3: State Transition ⬜
 
