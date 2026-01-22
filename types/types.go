@@ -12,9 +12,9 @@ type Bytes96 [96]byte
 const (
 	SecondsPerSlot         uint64 = 4
 	IntervalsPerSlot       uint64 = 4
-	SecondsPerInterval     uint64 = SecondsPerSlot / IntervalsPerSlot // 1
-	HistoricalRootsLimit   uint64 = 262144                            // 2^18
-	ValidatorRegistryLimit uint64 = 4096                              // 2^12
+	SecondsPerInterval     uint64 = SecondsPerSlot / IntervalsPerSlot
+	HistoricalRootsLimit   uint64 = 262144 // 2^18
+	ValidatorRegistryLimit uint64 = 4096   // 2^12
 )
 
 func (r Root) IsZero() bool {
@@ -32,40 +32,35 @@ func TimeToSlot(time, genesisTime uint64) Slot {
 	return Slot((time - genesisTime) / SecondsPerSlot)
 }
 
-// IsJustifiableAfter checks if this slot is a valid justification target
-// after a given finalized slot, according to 3SF-mini rules.
+// IsJustifiableAfter checks if this slot is a valid justification target.
 //
-// A slot is justifiable if delta (distance from finalized slot) is:
+// According to 3SF-mini, a slot is justifiable if delta from finalized is:
 //   - <= 5 (first few slots always justifiable)
 //   - A perfect square (9, 16, 25, 36...)
-//   - A pronic number (x*(x+1): 6, 12, 20, 30, 42...)
+//   - A pronic number n*(n+1): 6, 12, 20, 30...
+//
+// See: https://github.com/ethereum/research/blob/master/3sf-mini/consensus.py
 func (s Slot) IsJustifiableAfter(finalizedSlot Slot) bool {
 	if s < finalizedSlot {
 		return false
 	}
-
 	delta := uint64(s - finalizedSlot)
 
-	// Rule 1: First few slots are always justifiable
+	// Rule 1: first few slots always justifiable
 	if delta <= 5 {
 		return true
 	}
-
-	// Rule 2: Perfect square check
+	// Rule 2: perfect square
 	if isPerfectSquare(delta) {
 		return true
 	}
-
-	// Rule 3: Pronic number check (x*(x+1))
-	// n is pronic if 4n+1 is a perfect square
+	// Rule 3: pronic number (n is pronic if 4n+1 is a perfect square)
 	if isPerfectSquare(4*delta + 1) {
 		return true
 	}
-
 	return false
 }
 
-// isPerfectSquare returns true if n is a perfect square.
 func isPerfectSquare(n uint64) bool {
 	if n == 0 {
 		return true
@@ -74,7 +69,6 @@ func isPerfectSquare(n uint64) bool {
 	return root*root == n
 }
 
-// isqrt computes the integer square root of n.
 func isqrt(n uint64) uint64 {
 	if n == 0 {
 		return 0
@@ -88,8 +82,7 @@ func isqrt(n uint64) uint64 {
 	return x
 }
 
-// IsProposer returns true if the validator is the proposer for the given slot.
-// Uses round-robin selection: slot % numValidators == validatorIndex.
+// IsProposer checks if validator is the proposer for the slot (round-robin).
 func IsProposer(validatorIndex ValidatorIndex, slot Slot, numValidators uint64) bool {
 	if numValidators == 0 {
 		return false
@@ -97,19 +90,16 @@ func IsProposer(validatorIndex ValidatorIndex, slot Slot, numValidators uint64) 
 	return uint64(slot)%numValidators == uint64(validatorIndex)
 }
 
-// Checkpoint represents a justified or finalized checkpoint.
 type Checkpoint struct {
 	Root Root `ssz-size:"32"`
 	Slot Slot `ssz-size:"8"`
 }
 
-// Config holds chain configuration parameters.
 type Config struct {
 	NumValidators uint64 `ssz-size:"8"`
 	GenesisTime   uint64 `ssz-size:"8"`
 }
 
-// Vote represents a validator's vote for chain head.
 type Vote struct {
 	ValidatorID uint64 `ssz-size:"8"`
 	Slot        Slot   `ssz-size:"8"`
@@ -118,13 +108,11 @@ type Vote struct {
 	Source      Checkpoint
 }
 
-// SignedVote is a vote with its signature.
 type SignedVote struct {
 	Data      Vote
 	Signature Bytes32 `ssz-size:"32"`
 }
 
-// BlockHeader summarizes a block without the body.
 type BlockHeader struct {
 	Slot          Slot   `ssz-size:"8"`
 	ProposerIndex uint64 `ssz-size:"8"`
@@ -133,12 +121,10 @@ type BlockHeader struct {
 	BodyRoot      Root   `ssz-size:"32"`
 }
 
-// BlockBody contains the block's payload.
 type BlockBody struct {
-	Attestations []SignedVote `ssz-max:"4096"` // ValidatorRegistryLimit
+	Attestations []SignedVote `ssz-max:"4096"`
 }
 
-// Block is a complete block including header fields and body.
 type Block struct {
 	Slot          Slot   `ssz-size:"8"`
 	ProposerIndex uint64 `ssz-size:"8"`
@@ -147,21 +133,20 @@ type Block struct {
 	Body          BlockBody
 }
 
-// SignedBlock is a block with its proposer signature.
 type SignedBlock struct {
 	Message   Block
-	Signature Bytes32 `ssz-size:"32"` // Placeholder; actual signature is larger
+	Signature Bytes32 `ssz-size:"32"`
 }
 
-// State is the beacon state.
+// State is the main consensus state object.
 type State struct {
 	Config                   Config
 	Slot                     Slot        `ssz-size:"8"`
 	LatestBlockHeader        BlockHeader
 	LatestJustified          Checkpoint
 	LatestFinalized          Checkpoint
-	HistoricalBlockHashes    []Root `ssz-max:"262144"`                   // HistoricalRootsLimit
-	JustifiedSlots           []byte `ssz-max:"262144" ssz:"bitlist"`     // HistoricalRootsLimit
-	JustificationsRoots      []Root `ssz-max:"262144"`                   // HistoricalRootsLimit
-	JustificationsValidators []byte `ssz-max:"1073741824" ssz:"bitlist"` // 2^30 (262144 × 4096)
+	HistoricalBlockHashes    []Root `ssz-max:"262144"`
+	JustifiedSlots           []byte `ssz-max:"262144" ssz:"bitlist"`
+	JustificationsRoots      []Root `ssz-max:"262144"`
+	JustificationsValidators []byte `ssz-max:"1073741824" ssz:"bitlist"`
 }

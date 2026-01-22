@@ -1,4 +1,4 @@
-# Gean
+t# Gean
 
 A Go implementation of the Lean Ethereum consensus protocol that is simple enough to last.
 
@@ -45,16 +45,17 @@ Implement core consensus helper functions.
 - [x] `IsProposer()` - Round-robin proposer selection
 - [x] Genesis state generation aligned with spec
 
-### Milestone 3: State Transition ⬜
+### Milestone 3: State Transition ✅
 
 Implement the state transition function.
 
-- [ ] `State.ProcessSlots()` - Advance state through empty slots
-- [ ] `State.ProcessBlockHeader()` - Validate and apply block header
-- [ ] `State.ProcessAttestations()` - Apply votes and update justification
-- [ ] `State.ProcessBlock()` - Full block processing
-- [ ] `State.StateTransition()` - Complete state transition with validation
-- [ ] Justification and finalization logic
+- [x] `ProcessSlot()` - Cache state root in header
+- [x] `ProcessSlots()` - Advance state through empty slots
+- [x] `ProcessBlockHeader()` - Validate and apply block header
+- [x] `ProcessAttestations()` - Apply votes and update justification
+- [x] `ProcessBlock()` - Full block processing
+- [x] `StateTransition()` - Complete state transition with validation
+- [x] Bitlist helper functions for SSZ bitlists
 
 ### Milestone 4: Fork Choice ⬜
 
