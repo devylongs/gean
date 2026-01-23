@@ -76,18 +76,16 @@ func (s *State) ProcessBlockHeader(block *Block) (*State, error) {
 	// Append parent root to history
 	newState.HistoricalBlockHashes = append(newState.HistoricalBlockHashes, block.ParentRoot)
 
-	// Append justified bit (true only for genesis)
-	if s.LatestBlockHeader.Slot == 0 {
-		newState.JustifiedSlots = appendBit(newState.JustifiedSlots, true)
-	} else {
-		newState.JustifiedSlots = appendBit(newState.JustifiedSlots, false)
-	}
+	// Track justified slot (genesis slot 0 is always justified)
+	parentSlot := int(s.LatestBlockHeader.Slot)
+	newState.JustifiedSlots = appendBitAt(newState.JustifiedSlots, parentSlot, s.LatestBlockHeader.Slot == 0)
 
 	// Fill empty slots with zero hashes
 	emptySlots := int(block.Slot - s.LatestBlockHeader.Slot - 1)
 	for i := 0; i < emptySlots; i++ {
 		newState.HistoricalBlockHashes = append(newState.HistoricalBlockHashes, ZeroHash)
-		newState.JustifiedSlots = appendBit(newState.JustifiedSlots, false)
+		emptySlot := parentSlot + 1 + i
+		newState.JustifiedSlots = appendBitAt(newState.JustifiedSlots, emptySlot, false)
 	}
 
 	// Create new block header (state_root left empty, filled by next ProcessSlot)
@@ -206,14 +204,14 @@ func (s *State) Copy() *State {
 
 // Bitlist helpers
 
-func appendBit(bits []byte, val bool) []byte {
-	bitIndex := len(bits) * 8
-	byteIndex := bitIndex / 8
-	if byteIndex >= len(bits) {
+// appendBitAt sets a bit at the given index, extending the slice if needed.
+func appendBitAt(bits []byte, index int, val bool) []byte {
+	byteIndex := index / 8
+	for byteIndex >= len(bits) {
 		bits = append(bits, 0)
 	}
 	if val {
-		bits[byteIndex] |= 1 << (bitIndex % 8)
+		bits[byteIndex] |= 1 << (index % 8)
 	}
 	return bits
 }
