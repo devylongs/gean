@@ -3,14 +3,14 @@ package main
 import (
 	"fmt"
 
-	"github.com/devylongs/gean/types"
+	"github.com/devylongs/gean/consensus"
 )
 
 func main() {
 	fmt.Println("Gean - Go Lean Ethereum Client")
 
-	checkpoint := &types.Checkpoint{
-		Root: types.Root{0xab, 0xcd},
+	checkpoint := &consensus.Checkpoint{
+		Root: consensus.Root{0xab, 0xcd},
 		Slot: 100,
 	}
 
