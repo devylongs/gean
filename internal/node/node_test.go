@@ -97,6 +97,80 @@ func TestEngineUpdateHead(t *testing.T) {
 	}
 }
 
+// stateFinalizing builds an SSZ-serializable post-state pinned to the given
+// finalized checkpoint, so it round-trips through the store like a real state.
+func stateFinalizing(slot uint64, finalized *types.Checkpoint) *types.State {
+	return &types.State{
+		Config:                   &types.ChainConfig{GenesisTime: 1000},
+		Slot:                     slot,
+		LatestBlockHeader:        &types.BlockHeader{},
+		LatestJustified:          finalized,
+		LatestFinalized:          finalized,
+		JustifiedSlots:           types.NewBitlistSSZ(0),
+		JustificationsValidators: types.NewBitlistSSZ(0),
+	}
+}
+
+func TestUpdateFinalizedFollowsCanonicalHead(t *testing.T) {
+	e := makeTestEngine()
+	genesis := e.Store.Head()
+
+	var block1, block2 [32]byte
+	block1[0] = 0x11
+	block2[0] = 0x22
+
+	e.Store.InsertBlockHeader(block1, &types.BlockHeader{Slot: 1, ParentRoot: genesis})
+	e.Store.InsertBlockHeader(block2, &types.BlockHeader{Slot: 2, ParentRoot: block1})
+	e.FC.OnBlock(1, block1, genesis)
+	e.FC.OnBlock(2, block2, block1)
+
+	// The head's post-state finalizes block1; finalization must re-anchor there.
+	e.Store.InsertState(block2, stateFinalizing(2, &types.Checkpoint{Root: block1, Slot: 1}))
+	e.Store.SetHead(block2)
+
+	e.updateFinalizedFromHead(block2)
+
+	got := e.Store.LatestFinalized()
+	if got == nil || got.Slot != 1 || got.Root != block1 {
+		t.Fatalf("finalized=%v, want slot 1 root 0x%x", got, block1)
+	}
+}
+
+func TestDeriveFinalizedKeepsAnchorWhenNoBlockAtSlot(t *testing.T) {
+	e := makeTestEngine()
+	genesis := e.Store.Head()
+
+	var block1 [32]byte
+	block1[0] = 0x11
+	e.Store.InsertBlockHeader(block1, &types.BlockHeader{Slot: 2, ParentRoot: genesis})
+	// Post-state claims a finalized slot with no block on the chain at that slot
+	// (e.g. a checkpoint-sync anchor); the trusted checkpoint must stand.
+	e.Store.InsertState(block1, stateFinalizing(2, &types.Checkpoint{Root: block1, Slot: 1}))
+
+	if cp := store.DeriveFinalizedFromHead(e.Store, block1); cp != nil {
+		t.Fatalf("expected nil to keep anchor, got slot %d root 0x%x", cp.Slot, cp.Root)
+	}
+}
+
+func TestUpdateFinalizedNeverRegresses(t *testing.T) {
+	e := makeTestEngine()
+	genesis := e.Store.Head()
+
+	var block1 [32]byte
+	block1[0] = 0x11
+	e.Store.InsertBlockHeader(block1, &types.BlockHeader{Slot: 1, ParentRoot: genesis})
+	e.Store.SetLatestFinalized(&types.Checkpoint{Root: block1, Slot: 5})
+
+	// A head whose post-state finalizes an older slot must not move finalization back.
+	e.Store.InsertState(block1, stateFinalizing(1, &types.Checkpoint{Root: genesis, Slot: 0}))
+
+	e.updateFinalizedFromHead(block1)
+
+	if got := e.Store.LatestFinalized(); got == nil || got.Slot != 5 {
+		t.Fatalf("finalized regressed to %v, want slot 5", got)
+	}
+}
+
 func TestEngineUpdateSafeTarget(t *testing.T) {
 	e := makeTestEngine()
 	e.updateSafeTarget()

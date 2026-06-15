@@ -66,12 +66,8 @@ func onBlockCore(s *store.ConsensusStore, signedBlock *types.SignedBlock, verify
 	metrics.ObserveSTFTime(time.Since(stfStart).Seconds())
 
 	postState.LatestBlockHeader.StateRoot = block.StateRoot
-	finalizedAdvanced, err := persistBlock(s, blockRoot, signedBlock, postState)
-	if err != nil {
+	if err := persistBlock(s, blockRoot, signedBlock, postState); err != nil {
 		return err
-	}
-	if finalizedAdvanced {
-		metrics.IncFinalization("success")
 	}
 	importBlockAttestations(s, signedBlock)
 

@@ -3,7 +3,6 @@ package node
 import (
 	"github.com/geanlabs/gean/internal/blockprocessor"
 	"github.com/geanlabs/gean/internal/logger"
-	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -12,19 +11,12 @@ func (e *Engine) onBlock(signedBlock *types.SignedBlock) {
 		return
 	}
 
-	oldFinalizedSlot := e.Store.LatestFinalized().Slot
 	queue := []*types.SignedBlock{signedBlock}
 
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 		e.processOneBlock(current, &queue)
-	}
-
-	newFinalized := e.Store.LatestFinalized()
-	if newFinalized.Slot > oldFinalizedSlot {
-		store.PruneOnFinalization(e.Store, e.FC, oldFinalizedSlot, newFinalized.Slot, newFinalized.Root)
-		e.discardFinalizedPending(newFinalized.Slot)
 	}
 }
 
@@ -78,11 +70,6 @@ func (e *Engine) importKnownParentBlock(
 	e.dispatchRecovery(signedBlock)
 
 	e.FC.OnBlock(block.Slot, blockRoot, parentRoot)
-
-	finalized := e.Store.LatestFinalized()
-	if finalized.Slot > 0 {
-		e.FC.Prune(finalized.Root)
-	}
 
 	e.updateHead()
 	e.Pending.ClearDepth(blockRoot)

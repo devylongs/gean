@@ -6,6 +6,7 @@ import (
 	"github.com/geanlabs/gean/internal/attestation"
 	"github.com/geanlabs/gean/internal/blockprocessor"
 	"github.com/geanlabs/gean/internal/specfixtures"
+	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -66,7 +67,7 @@ func (sess *Session) applyBlock(step *specfixtures.ForkChoiceStep) error {
 		sess.fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 	}
 	justifiedRoot := sess.store.LatestJustified().Root
-	sess.store.SetHead(sess.fc.UpdateHead(justifiedRoot))
+	sess.setCanonicalHead(justifiedRoot)
 	sess.store.PromoteNewToKnown()
 	return nil
 }
@@ -171,7 +172,24 @@ func (sess *Session) promoteVotesAndUpdateHead() {
 		sess.fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 	}
 	justifiedRoot := sess.store.LatestJustified().Root
-	sess.store.SetHead(sess.fc.UpdateHead(justifiedRoot))
+	sess.setCanonicalHead(justifiedRoot)
+}
+
+// setCanonicalHead recomputes the head and re-anchors the finalized checkpoint to
+// the head's chain, mirroring the spec's update_head. Finalization is derived here
+// rather than during block import, matching the live node's head selection.
+func (sess *Session) setCanonicalHead(justifiedRoot [32]byte) {
+	headRoot := sess.fc.UpdateHead(justifiedRoot)
+	sess.store.SetHead(headRoot)
+
+	derived := store.DeriveFinalizedFromHead(sess.store, headRoot)
+	if derived == nil {
+		return
+	}
+	if current := sess.store.LatestFinalized(); current != nil && derived.Slot <= current.Slot {
+		return
+	}
+	sess.store.SetLatestFinalized(derived)
 }
 
 func (sess *Session) refreshSafeTarget() {

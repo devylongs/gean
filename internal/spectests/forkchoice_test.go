@@ -478,8 +478,7 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 			}
 
-			newHead := fc.UpdateHead(justifiedRoot)
-			s.SetHead(newHead)
+			simulateUpdateHead(s, fc, justifiedRoot)
 
 			// Promote new payloads to known (so next updateHead sees them).
 			s.PromoteNewToKnown()
@@ -557,8 +556,7 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 			for vid, data := range knownAtts {
 				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 			}
-			newHead := fc.UpdateHead(justifiedRoot)
-			s.SetHead(newHead)
+			simulateUpdateHead(s, fc, justifiedRoot)
 
 			if step.Checks != nil {
 				validateChecks(t, i, step.Checks, s, fc, labelRoots)
@@ -633,8 +631,7 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 			for vid, data := range knownAtts {
 				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 			}
-			newHead := fc.UpdateHead(justifiedRoot)
-			s.SetHead(newHead)
+			simulateUpdateHead(s, fc, justifiedRoot)
 
 			if step.Checks != nil {
 				validateChecks(t, i, step.Checks, s, fc, labelRoots)
@@ -843,6 +840,19 @@ func validateAttestationCheck(t *testing.T, stepIdx int, fc *forkchoice.ForkChoi
 	if ac.TargetSlot != nil && target.Data.Target != nil && target.Data.Target.Slot != *ac.TargetSlot {
 		t.Errorf("step %d: attestationCheck v=%d %s: targetSlot got %d, want %d",
 			stepIdx, ac.Validator, ac.Location, target.Data.Target.Slot, *ac.TargetSlot)
+	}
+}
+
+// simulateUpdateHead recomputes the head and re-anchors finalization to the head's
+// chain, mirroring the spec's update_head. Finalization is derived from the canonical
+// head rather than advanced during block import, matching the production node.
+func simulateUpdateHead(s *store.ConsensusStore, fc *forkchoice.ForkChoice, justifiedRoot [32]byte) {
+	newHead := fc.UpdateHead(justifiedRoot)
+	s.SetHead(newHead)
+	if derived := store.DeriveFinalizedFromHead(s, newHead); derived != nil {
+		if current := s.LatestFinalized(); current == nil || derived.Slot > current.Slot {
+			s.SetLatestFinalized(derived)
+		}
 	}
 }
 
