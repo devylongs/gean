@@ -118,6 +118,22 @@ func TestValidateAttestationDataSlotMismatches(t *testing.T) {
 	}
 }
 
+func TestValidateAttestationDataSlotBeforeHead(t *testing.T) {
+	s := makeValidationStore()
+	s.SetTime(30)
+	insertValidationHeaders(s)
+
+	data := makeValidAttestationData()
+	// Vote slot precedes the head it claims to have seen (head slot 5).
+	data.Slot = 4
+
+	err := attestation.ValidateAttestationData(s, data)
+	se, ok := err.(*store.StoreError)
+	if !ok || se.Kind != store.ErrAttestationSlotBeforeHead {
+		t.Fatalf("error=%v, want ErrAttestationSlotBeforeHead", err)
+	}
+}
+
 func TestValidateAttestationDataFutureSlot(t *testing.T) {
 	s := makeValidationStore()
 	s.SetTime(0)
