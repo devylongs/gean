@@ -120,7 +120,7 @@ type ForkChoiceStep struct {
 }
 
 type FCGossipAttestation struct {
-	ValidatorID uint64      `json:"validatorId"`
+	ValidatorID uint64      `json:"validatorIndex"`
 	Data        TestAttData `json:"data"`
 	Signature   string      `json:"signature"`
 	Proof       *FCProof    `json:"proof,omitempty"`
