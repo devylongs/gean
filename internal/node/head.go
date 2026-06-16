@@ -82,21 +82,29 @@ func (e *Engine) updateFinalizedFromHead(headRoot [32]byte) {
 	old := e.Store.LatestFinalized()
 	oldSlot := uint64(0)
 	if old != nil {
+		if derived.Root == old.Root && derived.Slot == old.Slot {
+			return
+		}
 		oldSlot = old.Slot
 	}
-	if derived.Slot <= oldSlot {
-		return
-	}
 
+	// Set unconditionally to the canonical head's finalized checkpoint, not a
+	// running maximum: a higher-finalized fork that loses head selection must not
+	// latch finalization above the head, so the checkpoint moves down when the head
+	// reorgs onto a chain that finalized fewer slots.
 	e.Store.SetLatestFinalized(derived)
-	metrics.IncFinalization("success")
-	logger.Info(logger.Forkchoice, "finalized advanced slot=%d root=0x%x", derived.Slot, derived.Root)
 
-	if derived.Slot > 0 {
-		e.FC.Prune(derived.Root)
+	// Pruning is irreversible, so it only runs when finalization genuinely
+	// advances; a downward move keeps the existing pruned horizon.
+	if derived.Slot > oldSlot {
+		metrics.IncFinalization("success")
+		logger.Info(logger.Forkchoice, "finalized advanced slot=%d root=0x%x", derived.Slot, derived.Root)
+		if derived.Slot > 0 {
+			e.FC.Prune(derived.Root)
+		}
+		store.PruneOnFinalization(e.Store, e.FC, oldSlot, derived.Slot, derived.Root)
+		e.discardFinalizedPending(derived.Slot)
 	}
-	store.PruneOnFinalization(e.Store, e.FC, oldSlot, derived.Slot, derived.Root)
-	e.discardFinalizedPending(derived.Slot)
 }
 
 func (e *Engine) updateSafeTarget() {

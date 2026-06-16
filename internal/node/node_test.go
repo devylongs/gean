@@ -152,22 +152,30 @@ func TestDeriveFinalizedKeepsAnchorWhenNoBlockAtSlot(t *testing.T) {
 	}
 }
 
-func TestUpdateFinalizedNeverRegresses(t *testing.T) {
+func TestUpdateFinalizedDoesNotLatchAboveHead(t *testing.T) {
 	e := makeTestEngine()
 	genesis := e.Store.Head()
 
-	var block1 [32]byte
+	var block1, block2 [32]byte
 	block1[0] = 0x11
+	block2[0] = 0x22
 	e.Store.InsertBlockHeader(block1, &types.BlockHeader{Slot: 1, ParentRoot: genesis})
-	e.Store.SetLatestFinalized(&types.Checkpoint{Root: block1, Slot: 5})
+	e.Store.InsertBlockHeader(block2, &types.BlockHeader{Slot: 2, ParentRoot: block1})
+	e.FC.OnBlock(1, block1, genesis)
+	e.FC.OnBlock(2, block2, block1)
 
-	// A head whose post-state finalizes an older slot must not move finalization back.
-	e.Store.InsertState(block1, stateFinalizing(1, &types.Checkpoint{Root: genesis, Slot: 0}))
+	// A losing fork briefly latched finalization at slot 2; the canonical head's
+	// post-state only finalizes block1 at slot 1, so finalization must move down
+	// to track the head rather than stay latched above it.
+	e.Store.SetLatestFinalized(&types.Checkpoint{Root: block2, Slot: 2})
+	e.Store.InsertState(block2, stateFinalizing(2, &types.Checkpoint{Root: block1, Slot: 1}))
+	e.Store.SetHead(block2)
 
-	e.updateFinalizedFromHead(block1)
+	e.updateFinalizedFromHead(block2)
 
-	if got := e.Store.LatestFinalized(); got == nil || got.Slot != 5 {
-		t.Fatalf("finalized regressed to %v, want slot 5", got)
+	got := e.Store.LatestFinalized()
+	if got == nil || got.Slot != 1 || got.Root != block1 {
+		t.Fatalf("finalized=%v, want slot 1 root 0x%x (must not latch above head)", got, block1)
 	}
 }
 
