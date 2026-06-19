@@ -1,6 +1,8 @@
 package statetransition
 
 import (
+	"fmt"
+
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -13,6 +15,28 @@ func ProcessAttestations(state *types.State, attestations []*types.AggregatedAtt
 	}
 	if state.LatestFinalized == nil {
 		return malformedState("latest finalized")
+	}
+
+	// Bound the distinct votes the block may carry. The cap belongs to the
+	// transition itself, not to any one caller, so the raw transition and
+	// block-production trial blocks inherit the bound. Each distinct data builds a
+	// tally sized to the validator set, so an unbounded count amplifies import
+	// work; the SSZ list limit sits far above the consensus cap and cannot
+	// substitute. Only the distinct count is bounded: split aggregates that share
+	// one data entry count once.
+	distinct := make(map[[32]byte]struct{})
+	for _, agg := range attestations {
+		if agg == nil || agg.Data == nil {
+			continue
+		}
+		dataRoot, err := agg.Data.HashTreeRoot()
+		if err != nil {
+			return fmt.Errorf("hash attestation data: %w", err)
+		}
+		distinct[dataRoot] = struct{}{}
+	}
+	if len(distinct) > int(types.MaxAttestationsData) {
+		return &TooManyAttestationDataError{Count: uint64(len(distinct)), Max: uint64(types.MaxAttestationsData)}
 	}
 
 	validatorCount := int(state.NumValidators())
@@ -38,7 +62,13 @@ func ProcessAttestations(state *types.State, attestations []*types.AggregatedAtt
 		source := agg.Data.Source
 		target := agg.Data.Target
 
-		if !IsValidVote(state, source, target) {
+		// An out-of-range justified-slot query rejects the whole block; any other
+		// invalid reason just filters the vote out, matching leanSpec.
+		reason, err := VoteInvalidReason(state, source, target)
+		if err != nil {
+			return err
+		}
+		if reason != "" {
 			continue
 		}
 		if !HeadMatchesChain(state, agg.Data.Head) {

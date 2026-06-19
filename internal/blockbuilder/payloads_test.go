@@ -218,6 +218,18 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
 	}
 
+	// Chain mismatch must be tested before any slot is justified below, since
+	// leanSpec checks target justification ahead of chain membership: an
+	// already-justified target would otherwise mask the mismatch as an expected skip.
+	wrongRoot := *data
+	wrongRoot.Target = &types.Checkpoint{Slot: data.Target.Slot, Root: [32]byte{0x99}}
+	payload.Data = &wrongRoot
+	if err := payloadBuildIssue(workingState, knownRoots, payload); !errors.Is(err, ErrPayloadVoteInvalid) {
+		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
+	} else if IsExpectedSkip(err) {
+		t.Fatalf("chain mismatch was marked expected: %v", err)
+	}
+
 	alreadyJustified := *data
 	workingState.JustifiedSlots = types.BitlistExtend(workingState.JustifiedSlots, 2)
 	types.BitlistSet(workingState.JustifiedSlots, 1)
@@ -226,15 +238,6 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
 	} else if !IsExpectedSkip(err) {
 		t.Fatalf("already-justified vote was not marked expected: %v", err)
-	}
-
-	wrongRoot := *data
-	wrongRoot.Target = &types.Checkpoint{Slot: data.Target.Slot, Root: [32]byte{0x99}}
-	payload.Data = &wrongRoot
-	if err := payloadBuildIssue(workingState, knownRoots, payload); !errors.Is(err, ErrPayloadVoteInvalid) {
-		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
-	} else if IsExpectedSkip(err) {
-		t.Fatalf("chain mismatch was marked expected: %v", err)
 	}
 
 	farState, err := workingState.Clone()
@@ -246,6 +249,9 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		farState.HistoricalBlockHashes = append(farState.HistoricalBlockHashes, make([]byte, types.RootSize))
 	}
 	farState.HistoricalBlockHashes[7] = copyRoot(farRoot)
+	// Grow the justification window alongside the chain so slot 7 is in range and
+	// the vote is rejected as not-justifiable rather than out-of-range.
+	farState.JustifiedSlots = types.BitlistExtend(farState.JustifiedSlots, 7)
 
 	farTarget := *data
 	farTarget.Target = &types.Checkpoint{Slot: 7, Root: farRoot}

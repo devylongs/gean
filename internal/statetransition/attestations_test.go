@@ -29,6 +29,9 @@ func TestLatestJustifiedDoesNotRegressWithinBlock(t *testing.T) {
 	state.LatestJustified = &types.Checkpoint{Slot: 3, Root: r3}
 	state.LatestFinalized = &types.Checkpoint{}
 	state.HistoricalBlockHashes = hashes
+	// Header processing would size the window to cover every voted slot; do the
+	// same here so the slot-9 vote is in range rather than a spurious rejection.
+	state.JustifiedSlots = types.NewBitlistSSZ(9)
 	setSlotJustified(state, 0, 3)
 
 	bits := []byte{0x17}
@@ -84,7 +87,9 @@ func TestProcessAttestationsStaleSourceJustifiesWithoutReFinalizing(t *testing.T
 	state.LatestJustified = &types.Checkpoint{Slot: 4, Root: r4}
 	state.LatestFinalized = &types.Checkpoint{Slot: 4, Root: r4}
 	state.HistoricalBlockHashes = hashes
-	state.JustifiedSlots = types.NewBitlistSSZ(0)
+	// Window covers slots 5..6 above the finalized boundary; the slot-1 source is
+	// below it and justified by definition, so only the slot-6 target is tracked.
+	state.JustifiedSlots = types.NewBitlistSSZ(2)
 
 	att := &types.AggregatedAttestation{
 		AggregationBits: types.BitlistFromIndices([]uint64{0, 1, 2}),
@@ -159,6 +164,7 @@ func TestProcessAttestationsCopiesCheckpointInputs(t *testing.T) {
 		make([]byte, types.RootSize),
 		append([]byte(nil), targetRoot[:]...),
 	}
+	state.JustifiedSlots = types.NewBitlistSSZ(2)
 
 	source := &types.Checkpoint{Slot: 0, Root: sourceRoot}
 	target := &types.Checkpoint{Slot: 2, Root: targetRoot}
@@ -229,7 +235,7 @@ func TestProcessAttestationsRequiresHeadOnChain(t *testing.T) {
 		s.LatestJustified = &types.Checkpoint{Slot: 0, Root: r0}
 		s.LatestFinalized = &types.Checkpoint{Slot: 0, Root: r0}
 		s.HistoricalBlockHashes = hashes
-		s.JustifiedSlots = types.NewBitlistSSZ(0)
+		s.JustifiedSlots = types.NewBitlistSSZ(2)
 		return s
 	}
 	mkAtt := func(head *types.Checkpoint) *types.AggregatedAttestation {
@@ -282,6 +288,9 @@ func bitsBoundsHarness() (*types.State, func(bits []byte) *types.AggregatedAttes
 	state.LatestJustified = &types.Checkpoint{Slot: 3, Root: r3}
 	state.LatestFinalized = &types.Checkpoint{}
 	state.HistoricalBlockHashes = hashes
+	// Window covers slots 1..4 so the slot-4 target is in range; slot-3 source is
+	// justified within it.
+	state.JustifiedSlots = types.NewBitlistSSZ(4)
 	setSlotJustified(state, 0, 3)
 
 	mkAtt := func(bits []byte) *types.AggregatedAttestation {
