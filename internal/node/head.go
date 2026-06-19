@@ -3,6 +3,7 @@ package node
 import (
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/metrics"
+	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -23,6 +24,8 @@ func (e *Engine) updateHead() {
 
 	oldHead := e.Store.Head()
 	newHead := e.FC.UpdateHead(justifiedRoot)
+
+	e.updateFinalizedFromHead(newHead)
 
 	if newHead != oldHead {
 		e.Store.SetHead(newHead)
@@ -61,6 +64,46 @@ func (e *Engine) updateHead() {
 					finalized.Slot, finalized.Root)
 			}
 		}
+	}
+}
+
+// updateFinalizedFromHead keeps the finalized checkpoint on the canonical head's
+// chain. The finalized slot is taken from the head's post-state and re-anchored to
+// the head's ancestor at that slot, rather than advanced independently per imported
+// block: a losing fork that finalizes a higher slot must not latch finalization
+// above the canonical head, which would otherwise stall target advancement. When
+// finalization advances it drives the same pruning/discard work the import path used.
+func (e *Engine) updateFinalizedFromHead(headRoot [32]byte) {
+	derived := store.DeriveFinalizedFromHead(e.Store, headRoot)
+	if derived == nil {
+		return
+	}
+
+	old := e.Store.LatestFinalized()
+	oldSlot := uint64(0)
+	if old != nil {
+		if derived.Root == old.Root && derived.Slot == old.Slot {
+			return
+		}
+		oldSlot = old.Slot
+	}
+
+	// Set unconditionally to the canonical head's finalized checkpoint, not a
+	// running maximum: a higher-finalized fork that loses head selection must not
+	// latch finalization above the head, so the checkpoint moves down when the head
+	// reorgs onto a chain that finalized fewer slots.
+	e.Store.SetLatestFinalized(derived)
+
+	// Pruning is irreversible, so it only runs when finalization genuinely
+	// advances; a downward move keeps the existing pruned horizon.
+	if derived.Slot > oldSlot {
+		metrics.IncFinalization("success")
+		logger.Info(logger.Forkchoice, "finalized advanced slot=%d root=0x%x", derived.Slot, derived.Root)
+		if derived.Slot > 0 {
+			e.FC.Prune(derived.Root)
+		}
+		store.PruneOnFinalization(e.Store, e.FC, oldSlot, derived.Slot, derived.Root)
+		e.discardFinalizedPending(derived.Slot)
 	}
 }
 

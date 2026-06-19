@@ -79,6 +79,41 @@ func (s *ConsensusStore) PutLatestFinalized(cp *types.Checkpoint) error {
 	return s.putMetadataCheckpoint(storage.KeyLatestFinalized, cp, "set latest finalized")
 }
 
+// DeriveFinalizedFromHead resolves the finalized checkpoint implied by the head's
+// post-state, mirroring the spec's update_head: it climbs the head's chain to the
+// ancestor block at the post-state finalized slot. Finalization is anchored to the
+// canonical head rather than advanced per imported block, so a losing fork that
+// finalizes a higher slot cannot latch finalization above the head and stall target
+// advancement. Returns nil when no stored block sits exactly at that slot (e.g. a
+// fresh checkpoint-sync anchor), so the caller keeps its current trusted checkpoint.
+func DeriveFinalizedFromHead(s *ConsensusStore, headRoot [32]byte) *types.Checkpoint {
+	if s == nil {
+		return nil
+	}
+	headState := s.GetState(headRoot)
+	if headState == nil || headState.LatestFinalized == nil {
+		return nil
+	}
+	finalizedSlot := headState.LatestFinalized.Slot
+
+	root := headRoot
+	for {
+		header := s.GetBlockHeader(root)
+		if header == nil || header.Slot <= finalizedSlot {
+			break
+		}
+		if s.GetBlockHeader(header.ParentRoot) == nil {
+			break
+		}
+		root = header.ParentRoot
+	}
+
+	if header := s.GetBlockHeader(root); header != nil && header.Slot == finalizedSlot {
+		return &types.Checkpoint{Root: root, Slot: finalizedSlot}
+	}
+	return nil
+}
+
 func (s *ConsensusStore) Config() *types.ChainConfig {
 	rv, err := s.beginRead("read config")
 	if err != nil {

@@ -38,4 +38,5 @@ const (
 	ErrJustifiedDivergenceNotClosed
 	ErrSourceNotAncestorOfTarget
 	ErrTargetNotAncestorOfHead
+	ErrAttestationSlotBeforeHead
 )

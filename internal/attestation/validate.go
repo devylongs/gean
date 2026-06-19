@@ -48,6 +48,10 @@ func errAttestationTooFarInFuture(attSlot, storeTime uint64) error {
 	return &store.StoreError{Kind: store.ErrAttestationTooFarInFuture, Message: fmt.Sprintf("attestation slot %d too far in future (store time %d intervals)", attSlot, storeTime)}
 }
 
+func errAttestationSlotBeforeHead(attSlot, headSlot uint64) error {
+	return &store.StoreError{Kind: store.ErrAttestationSlotBeforeHead, Message: fmt.Sprintf("attestation slot %d precedes head slot %d", attSlot, headSlot)}
+}
+
 func errSourceNotAncestorOfTarget() error {
 	return &store.StoreError{Kind: store.ErrSourceNotAncestorOfTarget, Message: "source checkpoint is not an ancestor of target"}
 }
@@ -94,6 +98,11 @@ func ValidateAttestationData(s *store.ConsensusStore, data *types.AttestationDat
 	}
 	if !checkpointIsAncestor(s, data.Target, data.Head) {
 		return errTargetNotAncestorOfHead()
+	}
+	// A vote cannot have observed its head before that head existed. This lower
+	// bound also keeps the wire slot clear of the 2**64 interval-multiply overflow.
+	if data.Slot < data.Head.Slot {
+		return errAttestationSlotBeforeHead(data.Slot, data.Head.Slot)
 	}
 	if data.Slot > math.MaxUint64/types.IntervalsPerSlot ||
 		data.Slot*types.IntervalsPerSlot > s.Time()+types.GossipDisparityIntervals {
