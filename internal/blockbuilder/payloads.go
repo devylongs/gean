@@ -87,7 +87,13 @@ func payloadBuildIssue(state *types.State, knownRoots KnownRoots, payload Attest
 	if !statetransition.HeadMatchesChain(state, data.Head) {
 		return errPayloadHeadOffChain(data.Head.Root)
 	}
-	if reason := statetransition.VoteInvalidReason(state, data.Source, data.Target); reason != "" {
+	// An out-of-range justified-slot query would reject the block the proposer is
+	// building, so drop the vote rather than include it.
+	reason, err := statetransition.VoteInvalidReason(state, data.Source, data.Target)
+	if err != nil {
+		return errPayloadVoteInvalid(data, err.Error())
+	}
+	if reason != "" {
 		if data.Source.Slot == 0 && data.Target.Slot == 0 &&
 			reason == statetransition.VoteReasonTargetAlreadyJustified {
 			return nil

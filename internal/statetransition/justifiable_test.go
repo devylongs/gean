@@ -49,12 +49,14 @@ func TestIsSlotJustifiedIgnoresBitlistTerminator(t *testing.T) {
 	state := makeGenesisState(1)
 	state.LatestFinalized.Slot = 0
 
-	if IsSlotJustified(state, 0, 1) {
-		t.Fatal("empty justified bitlist must not justify slot 1")
+	// An empty justified bitlist tracks no slots: slot 1 is out of range rather
+	// than spuriously justified by the SSZ terminator bit.
+	if justified, err := IsSlotJustified(state, 0, 1); justified || err == nil {
+		t.Fatalf("empty justified bitlist: got justified=%v err=%v, want false + out-of-range error", justified, err)
 	}
 
 	setSlotJustified(state, 0, 1)
-	if !IsSlotJustified(state, 0, 1) {
-		t.Fatal("explicitly justified slot 1 should be recognized")
+	if justified, err := IsSlotJustified(state, 0, 1); !justified || err != nil {
+		t.Fatalf("explicitly justified slot 1: got justified=%v err=%v, want true + nil", justified, err)
 	}
 }
