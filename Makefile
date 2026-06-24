@@ -1,4 +1,4 @@
-.PHONY: help build ffi test-ffi test test-spec test-all lint fmt sszgen clean tidy docker-build run-devnet run-setup run run-node1 run-node2 shadow-build shadow-setup shadow-run
+.PHONY: help build ffi test-ffi test test-spec test-all lint fmt sszgen clean tidy docker-build run-devnet run-setup run run-node1 run-node2 shadow-build shadow-setup shadow-run shadow-docker-build shadow-docker-run
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
@@ -116,6 +116,27 @@ shadow-setup: build ## Generate testnet + shadow/shadow.yaml for a Shadow run
 shadow-run: ## Run the Shadow simulation (requires shadow installed + make shadow-setup)
 	@rm -rf shadow/shadow.data
 	@cd shadow && shadow --progress true --parallelism $$(nproc) shadow.yaml
+
+# Dockerized Shadow gates — runs the Linux-only simulation from any host (e.g. macOS).
+# Shadow is x86_64-only, so the image is pinned to linux/amd64; on arm64 hosts it runs
+# under emulation (slow) — intended for native amd64 CI.
+SHADOW_PLATFORM ?= linux/amd64
+SHADOW_BASE_IMAGE ?= gean:shadow-base
+SHADOW_IMAGE ?= gean-shadow
+SHADOW_DOCKER_NODES ?= 3
+SHADOW_DOCKER_STOP_TIME ?= 120s
+SHADOW_DETERMINISM ?= 0
+
+shadow-docker-build: ## Build the Dockerized Shadow gate image (gean binary + Shadow)
+	docker build --platform $(SHADOW_PLATFORM) --build-arg GIT_COMMIT=$(GIT_COMMIT) -t $(SHADOW_BASE_IMAGE) .
+	docker build --platform $(SHADOW_PLATFORM) -f shadow/Dockerfile --build-arg GEAN_IMAGE=$(SHADOW_BASE_IMAGE) -t $(SHADOW_IMAGE) .
+
+shadow-docker-run: shadow-docker-build ## Run the Shadow verification gates inside Docker
+	docker run --rm --platform $(SHADOW_PLATFORM) --security-opt seccomp=unconfined --cap-add=SYS_PTRACE \
+		-e NODES=$(SHADOW_DOCKER_NODES) \
+		-e STOP_TIME=$(SHADOW_DOCKER_STOP_TIME) \
+		-e DETERMINISM=$(SHADOW_DETERMINISM) \
+		$(SHADOW_IMAGE)
 
 # --- leanSpec fixtures ---
 

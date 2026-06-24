@@ -6,9 +6,18 @@ own IP on a configurable graph, syscalls (clock, UDP, timers) are intercepted, a
 execution is single-stepped deterministically. This gives reproducible multi-node
 devnets and deterministic network-condition tests.
 
-**Linux only.** Shadow does not run on macOS — use a Linux host or container.
+**Linux + x86_64 only.** Shadow does not run on macOS and does not build on arm64. Use an
+x86_64 Linux host, or the Dockerized runner below (which pins `linux/amd64`).
 
-## Quick start
+## Dockerized gates (run from any host)
+
+`make shadow-docker-run` builds a `linux/amd64` image containing the gean binary plus Shadow
+and runs the verification gates (generate testnet → build topology → simulate → assert the
+chain finalized). Tunables: `SHADOW_DOCKER_NODES`, `SHADOW_DOCKER_STOP_TIME`,
+`SHADOW_DETERMINISM=1` (rerun and compare per-slot block roots). On an arm64 host the image
+runs under emulation and is slow; run it in native amd64 CI for real timing.
+
+## Quick start (native x86_64 Linux)
 
 ```bash
 make shadow-setup     # build, generate testnet keys, write shadow/shadow.yaml

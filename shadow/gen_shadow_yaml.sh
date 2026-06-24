@@ -16,6 +16,7 @@
 #   STOP_TIME          Shadow stop_time                       (default: 90s)
 #   IP_PREFIX          host IP prefix                         (default: 10.0.0.)
 #   IP_OFFSET          first host's last octet                (default: 10)
+#   GEAN_BIN           path to the gean binary                (default: <root>/bin/gean)
 #   SHADOW_AGGREGATE_MS  simulated aggregation delay (ms)     (default: 0)
 #   SHADOW_VERIFY_MS     simulated verify delay (ms)          (default: 0)
 set -euo pipefail
@@ -33,7 +34,7 @@ abspath() { (cd "$1" >/dev/null 2>&1 && pwd) || { echo "missing dir: $1" >&2; ex
 ROOT="$(abspath "$(dirname "$0")/..")"
 TESTNET_ABS="$(abspath "$TESTNET_DIR")"
 NODES_YAML="$TESTNET_ABS/nodes.yaml"
-GEAN_BIN="$ROOT/bin/gean"
+GEAN_BIN="${GEAN_BIN:-$ROOT/bin/gean}"
 
 [[ -f "$NODES_YAML" ]] || { echo "Error: $NODES_YAML not found — run 'make run-setup' first" >&2; exit 1; }
 [[ -x "$GEAN_BIN" ]] || { echo "Error: $GEAN_BIN not built — run 'make build' first" >&2; exit 1; }
