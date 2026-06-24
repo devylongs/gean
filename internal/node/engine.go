@@ -11,6 +11,7 @@ import (
 	"github.com/geanlabs/gean/internal/p2p"
 	"github.com/geanlabs/gean/internal/pending"
 	"github.com/geanlabs/gean/internal/role"
+	"github.com/geanlabs/gean/internal/shadowcost"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 	"github.com/geanlabs/gean/xmss"
@@ -47,6 +48,8 @@ type Engine struct {
 
 	AggregationDispatchCh chan aggregation.Dispatch
 
+	ShadowCosts shadowcost.Costs
+
 	lastTick time.Time
 }
 
@@ -57,6 +60,7 @@ func New(
 	keys *xmss.KeyManager,
 	aggCtl *role.Controller,
 	committeeCount uint64,
+	shadowCosts shadowcost.Costs,
 ) *Engine {
 	p2p.SetClientGitCommit(gitCommit)
 	e := &Engine{
@@ -75,6 +79,7 @@ func New(
 		FailedRootCh:          make(chan [32]byte, 64),
 		FetchRootCh:           make(chan [32]byte, 256),
 		AggregationDispatchCh: make(chan aggregation.Dispatch, 1),
+		ShadowCosts:           shadowCosts,
 	}
 	e.configureP2PHooks()
 	return e

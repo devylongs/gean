@@ -50,6 +50,7 @@ func (e *Engine) onGossipAttestation(att *types.SignedAttestation) {
 	verifyStart := time.Now()
 	err = attestation.VerifyGossipAttestation(e.Store, att.ValidatorID, att.Data, dataRoot, att.Signature[:])
 	metrics.ObservePqSigVerificationTime(time.Since(verifyStart).Seconds())
+	e.ShadowCosts.DelayVerify()
 	if err != nil {
 		metrics.IncPqSigAttestationSigsInvalid()
 		metrics.IncAttestationsInvalid()

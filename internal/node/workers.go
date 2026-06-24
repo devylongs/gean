@@ -8,7 +8,7 @@ import (
 
 func (e *Engine) startWorkers(ctx context.Context) {
 	go e.runFetchBatcher(ctx)
-	go aggregation.RunWorker(ctx, e.AggregationDispatchCh, e.Store, e.Store.PubKeyCache, e.P2P)
+	go aggregation.RunWorker(ctx, e.AggregationDispatchCh, e.Store, e.Store.PubKeyCache, e.P2P, e.ShadowCosts)
 	go e.runAttestationWorker(ctx)
 }
 

@@ -70,7 +70,7 @@ func run(cfg config) error {
 	preinitializeXMSS(cfg.IsAggregator)
 
 	aggCtl := role.NewWithHook(cfg.IsAggregator, metrics.SetIsAggregator)
-	n := node.New(s, fc, p2pHost, inputs.keyManager, aggCtl, cfg.CommitteeCount)
+	n := node.New(s, fc, p2pHost, inputs.keyManager, aggCtl, cfg.CommitteeCount, cfg.shadowCosts())
 
 	registerReqRespHandlers(p2pHost, s)
 	startNodeNetworking(ctx, n, s, p2pHost, inputs.bootnodes)

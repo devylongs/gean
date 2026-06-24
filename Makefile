@@ -1,4 +1,4 @@
-.PHONY: help build ffi test-ffi test test-spec test-all lint fmt sszgen clean tidy docker-build run-devnet run-setup run run-node1 run-node2
+.PHONY: help build ffi test-ffi test test-spec test-all lint fmt sszgen clean tidy docker-build run-devnet run-setup run run-node1 run-node2 shadow-build shadow-setup shadow-run
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
@@ -100,6 +100,22 @@ run-node2: build ## Run node2 on port 9002
 		--gossipsub-port 9002 \
 		--api-port 5054 \
 		--metrics-port 8082
+
+# --- Shadow network simulator (Linux only; see shadow/README.md) ---
+
+SHADOW_STOP_TIME ?= 90s
+SHADOW_GENESIS_DELAY ?= 120
+
+shadow-build: build ## Build gean for Shadow (dynamic ELF — keep CGo on, never static)
+	@echo "shadow: bin/gean ready; the harness sets QUIC_GO_DISABLE_GSO=true per host"
+
+shadow-setup: build ## Generate testnet + shadow/shadow.yaml for a Shadow run
+	@bin/keygen --validators $(NUM_VALIDATORS) --nodes $(NUM_NODES) --output $(TESTNET_DIR) --genesis-delay $(SHADOW_GENESIS_DELAY)
+	@TESTNET_DIR=$(TESTNET_DIR) STOP_TIME=$(SHADOW_STOP_TIME) ./shadow/gen_shadow_yaml.sh
+
+shadow-run: ## Run the Shadow simulation (requires shadow installed + make shadow-setup)
+	@rm -rf shadow/shadow.data
+	@cd shadow && shadow --progress true --parallelism $$(nproc) shadow.yaml
 
 # --- leanSpec fixtures ---
 

@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/geanlabs/gean/internal/shadowcost"
 )
 
 var errInvalidConfig = errors.New("invalid gean configuration")
@@ -26,6 +29,8 @@ type config struct {
 	CommitteeCount     uint64
 	AggregateSubnetIDs []uint64
 	DataDir            string
+	ShadowAggregateMs  int
+	ShadowVerifyMs     int
 }
 
 type configPaths struct {
@@ -53,6 +58,10 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	fs.Uint64Var(&cfg.CommitteeCount, "attestation-committee-count", 1, "Number of attestation subnets")
 	fs.StringVar(&aggregateSubnetIDs, "aggregate-subnet-ids", "", "Comma-separated subnet IDs (requires --is-aggregator)")
 	fs.StringVar(&cfg.DataDir, "data-dir", "./data", "Pebble database directory")
+	fs.IntVar(&cfg.ShadowAggregateMs, "shadow-aggregate-cost-ms", 0,
+		"Simulated aggregation prover delay in ms (network-simulator runs only; 0 disables)")
+	fs.IntVar(&cfg.ShadowVerifyMs, "shadow-verify-cost-ms", 0,
+		"Simulated attestation-verify delay in ms (network-simulator runs only; 0 disables)")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
@@ -74,6 +83,10 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	}
 	if cfg.CommitteeCount < 1 {
 		fmt.Fprintln(stderr, "--attestation-committee-count must be >= 1")
+		return cfg, errInvalidConfig
+	}
+	if cfg.ShadowAggregateMs < 0 || cfg.ShadowVerifyMs < 0 {
+		fmt.Fprintln(stderr, "--shadow-*-cost-ms must be >= 0")
 		return cfg, errInvalidConfig
 	}
 	if !cfg.IsAggregator && aggregateSubnetIDs != "" {
@@ -137,6 +150,13 @@ func (c config) paths() configPaths {
 		bootnodes:  filepath.Join(c.ConfigDir, "nodes.yaml"),
 		validators: filepath.Join(c.ConfigDir, "annotated_validators.yaml"),
 		keysDir:    filepath.Join(c.ConfigDir, "hash-sig-keys"),
+	}
+}
+
+func (c config) shadowCosts() shadowcost.Costs {
+	return shadowcost.Costs{
+		Aggregate: time.Duration(c.ShadowAggregateMs) * time.Millisecond,
+		Verify:    time.Duration(c.ShadowVerifyMs) * time.Millisecond,
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/geanlabs/gean/internal/forkchoice"
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/role"
+	"github.com/geanlabs/gean/internal/shadowcost"
 	"github.com/geanlabs/gean/internal/storage"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/syncer"
@@ -46,7 +47,7 @@ func makeTestEngine() *Engine {
 
 	fc := forkchoice.New(0, genesisRoot, [32]byte{})
 
-	return New(s, fc, nil, nil, role.New(false), 1)
+	return New(s, fc, nil, nil, role.New(false), 1, shadowcost.Costs{})
 }
 
 func TestEngineCreation(t *testing.T) {

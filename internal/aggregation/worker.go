@@ -6,6 +6,7 @@ import (
 
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/metrics"
+	"github.com/geanlabs/gean/internal/shadowcost"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 	"github.com/geanlabs/gean/xmss"
@@ -26,6 +27,7 @@ func RunWorker(
 	consensusStore *store.ConsensusStore,
 	cache *xmss.PubKeyCache,
 	publisher Publisher,
+	costs shadowcost.Costs,
 ) {
 	for {
 		select {
@@ -41,6 +43,7 @@ func RunWorker(
 
 			workerStart := time.Now()
 			aggs, payloads, deletes := aggregateFromSnapshot(dispatch.Snapshot, cache)
+			costs.DelayAggregate()
 			applyAggregationMutations(consensusStore, payloads, deletes)
 			publishAggregates(ctx, publisher, aggs)
 			metrics.ObserveAggregationWorkerTotalTime(time.Since(workerStart).Seconds())
