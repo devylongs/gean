@@ -16,6 +16,7 @@ NODES="${NODES:-3}"
 STOP_TIME="${STOP_TIME:-120s}"
 FINALIZE_MIN="${FINALIZE_MIN:-1}"
 DETERMINISM="${DETERMINISM:-0}"
+GENESIS_DELAY="${GENESIS_DELAY:-30}"
 WORK="${WORK:-/work}"
 
 GEAN_BIN="$(command -v gean)"
@@ -31,7 +32,7 @@ root_digest()   { grep -rhoE 'block slot=[0-9]+ block_root=0x[0-9a-f]+' "$1"/hos
 run_sim() {
   local out="$1"
   rm -rf "$WORK/testnet" "$WORK/shadow"
-  "$KEYGEN_BIN" --validators "$NODES" --nodes "$NODES" --output "$WORK/testnet" --genesis-delay 120
+  "$KEYGEN_BIN" --validators "$NODES" --nodes "$NODES" --output "$WORK/testnet" --genesis-delay "$GENESIS_DELAY"
   TESTNET_DIR="$WORK/testnet" OUT_DIR="$WORK/shadow" GEAN_BIN="$GEAN_BIN" STOP_TIME="$STOP_TIME" bash "$GEN"
   rm -rf "$out"
   ( cd "$WORK/shadow" && shadow --progress true --parallelism "$(nproc)" --data-directory "$out" shadow.yaml )

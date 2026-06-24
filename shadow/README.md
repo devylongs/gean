@@ -14,8 +14,12 @@ x86_64 Linux host, or the Dockerized runner below (which pins `linux/amd64`).
 `make shadow-docker-run` builds a `linux/amd64` image containing the gean binary plus Shadow
 and runs the verification gates (generate testnet → build topology → simulate → assert the
 chain finalized). Tunables: `SHADOW_DOCKER_NODES`, `SHADOW_DOCKER_STOP_TIME`,
-`SHADOW_DETERMINISM=1` (rerun and compare per-slot block roots). On an arm64 host the image
-runs under emulation and is slow; run it in native amd64 CI for real timing.
+`SHADOW_DETERMINISM=1` (rerun and compare per-slot block roots).
+
+The image is built and run as `linux/amd64`. **It must run on a native amd64 host.** On arm64
+(e.g. Apple Silicon) the gean build and Shadow compile succeed under emulation, but Shadow
+aborts at runtime because QEMU does not implement `pidfd_open` (ENOSYS); it also cannot emulate
+`cpuid`, which would break determinism. Run the gates on an amd64 Linux host or in amd64 CI.
 
 ## Quick start (native x86_64 Linux)
 
