@@ -18,6 +18,9 @@ func TestParseOptionsDefaults(t *testing.T) {
 	if opts.Validators != 5 || opts.Nodes != 3 || opts.OutputDir != "testnet" || opts.BasePort != 9000 {
 		t.Fatalf("unexpected defaults: %+v", opts)
 	}
+	if opts.GenesisTime != 0 || opts.GenesisDelay != 30 {
+		t.Fatalf("unexpected genesis defaults: %+v", opts)
+	}
 }
 
 func TestParseOptionsRejectsInvalidValues(t *testing.T) {
@@ -27,6 +30,7 @@ func TestParseOptionsRejectsInvalidValues(t *testing.T) {
 		{"--output", ""},
 		{"--base-port", "0"},
 		{"--base-port", "65535", "--nodes", "2"},
+		{"--genesis-delay", "-1"},
 	}
 	for _, args := range tests {
 		var stderr bytes.Buffer
