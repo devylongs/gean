@@ -559,6 +559,12 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 			}
 			s.NewPayloads.Push(dataRoot, attData, proof)
 
+			// Record the raw per-validator signature, mirroring the spec's
+			// attestation_signatures pool that the "signatures" check reads.
+			var sig [types.SignatureSize]byte
+			copy(sig[:], signature)
+			s.AttestationSignatures.Insert(dataRoot, attData, att.ValidatorID, sig)
+
 			// Feed vote to fork choice so attestation weight is reflected.
 			fc.SetNewVote(att.ValidatorID, attData.Head.Root, attData.Slot, attData)
 
@@ -825,24 +831,28 @@ func validateChecks(t *testing.T, stepIdx int, checks *fcChecks, s *store.Consen
 	}
 
 	for _, ac := range checks.AttestationChecks {
-		validateAttestationCheck(t, stepIdx, fc, ac)
+		validateAttestationCheck(t, stepIdx, s, fc, ac)
 	}
 }
 
-func validateAttestationCheck(t *testing.T, stepIdx int, fc *forkchoice.ForkChoice, ac fcAttestationCheck) {
+func validateAttestationCheck(t *testing.T, stepIdx int, s *store.ConsensusStore, fc *forkchoice.ForkChoice, ac fcAttestationCheck) {
 	t.Helper()
-	tracker, ok := fc.VoteTracker(ac.Validator)
-	if !ok {
-		t.Fatalf("step %d: attestationCheck v=%d location=%q: no vote tracker", stepIdx, ac.Validator, ac.Location)
-	}
 	var target *forkchoice.VoteTarget
 	switch ac.Location {
-	case "new":
-		target = tracker.LatestNew
-	case "known":
-		target = tracker.LatestKnown
+	case "new", "known":
+		tracker, ok := fc.VoteTracker(ac.Validator)
+		if !ok {
+			t.Fatalf("step %d: attestationCheck v=%d location=%q: no vote tracker", stepIdx, ac.Validator, ac.Location)
+		}
+		if ac.Location == "new" {
+			target = tracker.LatestNew
+		} else {
+			target = tracker.LatestKnown
+		}
+	case "signatures":
+		target = latestSignatureVote(s, ac.Validator)
 	default:
-		t.Fatalf("step %d: attestationCheck v=%d: unsupported location %q (want \"new\" or \"known\")",
+		t.Fatalf("step %d: attestationCheck v=%d: unsupported location %q (want \"new\", \"known\" or \"signatures\")",
 			stepIdx, ac.Validator, ac.Location)
 	}
 	if target == nil {
@@ -872,6 +882,28 @@ func validateAttestationCheck(t *testing.T, stepIdx int, fc *forkchoice.ForkChoi
 		t.Errorf("step %d: attestationCheck v=%d %s: targetSlot got %d, want %d",
 			stepIdx, ac.Validator, ac.Location, target.Data.Target.Slot, *ac.TargetSlot)
 	}
+}
+
+// latestSignatureVote mirrors the spec's "signatures" location: scan the raw
+// attestation-signature pool and return the validator's highest-slot vote
+// (first seen wins on equal slots, matching the fork-choice rule). Returns nil
+// when the validator has no signature recorded.
+func latestSignatureVote(s *store.ConsensusStore, validator uint64) *forkchoice.VoteTarget {
+	var latest *types.AttestationData
+	for _, entry := range s.AttestationSignatures.Snapshot() {
+		for _, sig := range entry.Signatures {
+			if sig.ValidatorID != validator {
+				continue
+			}
+			if latest == nil || latest.Slot < entry.Data.Slot {
+				latest = entry.Data
+			}
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	return &forkchoice.VoteTarget{Slot: latest.Slot, Data: latest}
 }
 
 // simulateUpdateHead recomputes the head and re-anchors finalization to the head's
