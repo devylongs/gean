@@ -35,6 +35,12 @@ func run(cfg config) error {
 	}
 	defer inputs.keyManager.Close()
 
+	// Committee count is a network-wide parameter: resolve the flag against the
+	// shared config before any subnet routing is wired (p2p subscriptions and
+	// the engine both read cfg.CommitteeCount below).
+	cfg.CommitteeCount = resolveCommitteeCount(cfg.CommitteeCount, cfg.committeeCountSet, inputs.genesisConfig.AttestationCommitteeCount)
+	logger.Info(logger.Node, "attestation committee count: %d", cfg.CommitteeCount)
+
 	backend, s, err := openStore(cfg.DataDir)
 	if err != nil {
 		logger.Error(logger.Node, "open pebble: %v", err)

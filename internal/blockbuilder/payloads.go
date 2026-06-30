@@ -81,14 +81,17 @@ func payloadBuildIssue(state *types.State, knownRoots KnownRoots, payload Attest
 	if !knownRoots.Contains(data.Head.Root) {
 		return errPayloadHeadUnknown(data.Head.Root)
 	}
-	// Mirror the spec proposer: head must sit on the canonical chain, not just be
-	// a known block, so the builder drops the same off-fork votes the state
-	// transition would skip. Source/target chain membership is covered below.
+	// Only source votes from the chain's current justified checkpoint: older sources
+	// anchor off a different chain; newer ones are retried once a later pass justifies them.
+	if justified := currentJustifiedSlot(state); data.Source.Slot != justified {
+		return errPayloadSourceNotCurrentJustified(data.Source.Slot, justified)
+	}
+	// Head must sit on the canonical chain, not merely be known, so the builder drops
+	// the same off-fork votes the state transition would skip.
 	if !statetransition.HeadMatchesChain(state, data.Head) {
 		return errPayloadHeadOffChain(data.Head.Root)
 	}
-	// An out-of-range justified-slot query would reject the block the proposer is
-	// building, so drop the vote rather than include it.
+	// An out-of-range justified-slot query would reject the block being built; drop the vote.
 	reason, err := statetransition.VoteInvalidReason(state, data.Source, data.Target)
 	if err != nil {
 		return errPayloadVoteInvalid(data, err.Error())
@@ -101,6 +104,15 @@ func payloadBuildIssue(state *types.State, knownRoots KnownRoots, payload Attest
 		return errPayloadVoteInvalid(data, reason)
 	}
 	return nil
+}
+
+// currentJustifiedSlot is the working state's justified slot — the only source
+// slot eligible this pass — advancing as the fixed-point loop accepts votes.
+func currentJustifiedSlot(state *types.State) uint64 {
+	if state == nil || state.LatestJustified == nil {
+		return 0
+	}
+	return state.LatestJustified.Slot
 }
 
 func compareRoots(a, b [32]byte) int {

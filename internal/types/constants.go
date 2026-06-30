@@ -6,8 +6,11 @@ const (
 	MillisecondsPerSlot     = SecondsPerSlot * 1000
 	MillisecondsPerInterval = MillisecondsPerSlot / IntervalsPerSlot
 
-	HistoricalRootsLimit       = 1 << 18
-	ValidatorRegistryLimit     = 1 << 12
+	HistoricalRootsLimit   = 1 << 18
+	ValidatorRegistryLimit = 1 << 12
+	// AttestationCommitteeCount is the default number of attestation subnets.
+	// It is a network parameter, not a fixed invariant: config.yaml's
+	// ATTESTATION_COMMITTEE_COUNT or --attestation-committee-count override it.
 	AttestationCommitteeCount  = 1
 	JustificationLookbackSlots = 3
 	MaxAttestationsData        = 8

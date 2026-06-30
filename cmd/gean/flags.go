@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/geanlabs/gean/internal/types"
 )
 
 var errInvalidConfig = errors.New("invalid gean configuration")
@@ -24,6 +26,7 @@ type config struct {
 	CheckpointURL      string
 	IsAggregator       bool
 	CommitteeCount     uint64
+	committeeCountSet  bool
 	AggregateSubnetIDs []uint64
 	DataDir            string
 }
@@ -50,13 +53,18 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.NodeID, "node-id", "", "Node identifier, e.g. gean_0 (required)")
 	fs.StringVar(&cfg.CheckpointURL, "checkpoint-sync-url", "", "URL for checkpoint sync (optional)")
 	fs.BoolVar(&cfg.IsAggregator, "is-aggregator", false, "Enable attestation aggregation")
-	fs.Uint64Var(&cfg.CommitteeCount, "attestation-committee-count", 1, "Number of attestation subnets")
+	fs.Uint64Var(&cfg.CommitteeCount, "attestation-committee-count", uint64(types.AttestationCommitteeCount), "Number of attestation subnets (overrides config.yaml ATTESTATION_COMMITTEE_COUNT)")
 	fs.StringVar(&aggregateSubnetIDs, "aggregate-subnet-ids", "", "Comma-separated subnet IDs (requires --is-aggregator)")
 	fs.StringVar(&cfg.DataDir, "data-dir", "./data", "Pebble database directory")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "attestation-committee-count" {
+			cfg.committeeCountSet = true
+		}
+	})
 
 	if cfg.ConfigDir == "" || cfg.NodeKey == "" || cfg.NodeID == "" {
 		fmt.Fprintln(stderr, "required flags: --custom-network-config-dir, --node-key, --node-id")
@@ -90,6 +98,21 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	}
 	cfg.AggregateSubnetIDs = subnetIDs
 	return cfg, nil
+}
+
+// resolveCommitteeCount picks the effective attestation committee count.
+// Precedence is the lean-network convention: an explicit
+// --attestation-committee-count flag wins, otherwise the shared config.yaml
+// ATTESTATION_COMMITTEE_COUNT, otherwise the flag default (the spec value).
+// The loader already guarantees configCount, when present, is >= 1.
+func resolveCommitteeCount(flagCount uint64, flagSet bool, configCount *uint64) uint64 {
+	if flagSet {
+		return flagCount
+	}
+	if configCount != nil {
+		return *configCount
+	}
+	return flagCount
 }
 
 func validatePort(name string, port int, stderr io.Writer) error {

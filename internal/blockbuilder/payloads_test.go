@@ -263,6 +263,31 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 	}
 }
 
+func TestPayloadBuildIssueSkipsStaleSource(t *testing.T) {
+	headState, parentRoot, data, dataRoot := postHeaderVoteInput(t)
+	workingState, err := transitionBlock(headState, 3, newBlock(3, 0, parentRoot, nil))
+	if err != nil {
+		t.Fatalf("transition header: %v", err)
+	}
+
+	// workingState is justified at slot 1; a vote sourcing at slot 0 no longer
+	// matches the current justified checkpoint and is an expected skip.
+	staleSource := *data
+	staleSource.Source = &types.Checkpoint{Slot: 0, Root: data.Head.Root}
+	payload := AttestationPayload{
+		DataRoot: dataRoot,
+		Data:     &staleSource,
+		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
+	}
+	err = payloadBuildIssue(workingState, map[[32]byte]bool{parentRoot: true}, payload)
+	if !errors.Is(err, ErrPayloadSourceNotCurrentJustified) {
+		t.Fatalf("payload build issue=%v, want ErrPayloadSourceNotCurrentJustified", err)
+	}
+	if !IsExpectedSkip(err) {
+		t.Fatalf("stale source skip was not marked expected: %v", err)
+	}
+}
+
 func TestPayloadBuildIssueAllowsGenesisSelfVote(t *testing.T) {
 	root := [32]byte{1}
 	state := &types.State{
