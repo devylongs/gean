@@ -254,14 +254,13 @@ func (e *Engine) produceBlockWithSignatures(slot, validatorIndex uint64) (*types
 	}
 
 	result, err := blockbuilder.Build(blockbuilder.Input{
-		HeadState:         headState,
-		Slot:              slot,
-		ProposerIndex:     validatorIndex,
-		ParentRoot:        headRoot,
-		KnownBlockRoots:   knownBlockRoots,
-		Payloads:          payloadsFromEntries(e.Store.KnownPayloads.Entries()),
-		RequiredJustified: e.Store.LatestJustified(),
-		ProofMerger:       attestationproof.NewMerger(e.Store.PubKeyCache),
+		HeadState:       headState,
+		Slot:            slot,
+		ProposerIndex:   validatorIndex,
+		ParentRoot:      headRoot,
+		KnownBlockRoots: knownBlockRoots,
+		Payloads:        payloadsFromEntries(e.Store.KnownPayloads.Entries()),
+		ProofMerger:     attestationproof.NewMerger(e.Store.PubKeyCache),
 	})
 	if err != nil {
 		metrics.IncBlockBuildingFailures()

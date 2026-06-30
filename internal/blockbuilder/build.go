@@ -12,7 +12,6 @@ func Build(input Input) (*Result, error) {
 	if err := validateInput(input); err != nil {
 		return nil, err
 	}
-	required := requiredCheckpoint(input.RequiredJustified)
 
 	aggStart := time.Now()
 	plan, err := planAttestations(input)
@@ -27,11 +26,6 @@ func Build(input Input) (*Result, error) {
 		return nil, fmt.Errorf("post-state root: %w", err)
 	}
 	finalBlock.StateRoot = stateRoot
-
-	if !justifiedMeetsRequired(plan.postState, required) {
-		return nil, errJustifiedDivergenceNotClosed(
-			plan.postState.LatestJustified, required)
-	}
 
 	return &Result{
 		Block:             finalBlock,
