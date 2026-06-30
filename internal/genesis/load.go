@@ -57,9 +57,13 @@ func (gc *GenesisConfig) validate() error {
 		return fmt.Errorf("VALIDATOR_COUNT=%d disagrees with len(GENESIS_VALIDATORS)=%d",
 			*gc.ValidatorCount, len(gc.GenesisValidators))
 	}
-	if gc.AttestationCommitteeCount != nil && *gc.AttestationCommitteeCount != types.AttestationCommitteeCount {
-		return fmt.Errorf("ATTESTATION_COMMITTEE_COUNT=%d disagrees with gean's %d",
-			*gc.AttestationCommitteeCount, types.AttestationCommitteeCount)
+	// ATTESTATION_COMMITTEE_COUNT is a shared network parameter, not a gean
+	// constant: every node in a devnet must agree on it, so it is sourced from
+	// the common config rather than pinned per client. Accept any positive
+	// value (multi-subnet devnets run >1); reject 0, which would divide by zero
+	// when mapping a validator to its subnet (validator_index % count).
+	if gc.AttestationCommitteeCount != nil && *gc.AttestationCommitteeCount == 0 {
+		return fmt.Errorf("ATTESTATION_COMMITTEE_COUNT must be >= 1")
 	}
 
 	attestationPubkeys := make(map[[types.PubkeySize]byte]int, len(gc.GenesisValidators))
