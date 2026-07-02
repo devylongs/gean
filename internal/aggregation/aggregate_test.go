@@ -92,7 +92,7 @@ func TestAggregateFromSnapshotExpiredDeadlineReportsTruncation(t *testing.T) {
 	snap := aggregateTestSnapshot(5)
 	cache := xmss.NewPubKeyCache()
 
-	aggs, payloads, deletes, truncated := aggregateFromSnapshot(snap, cache, time.Now().Add(-time.Second))
+	aggs, payloads, deletes, truncated := aggregateFromSnapshot(snap, cache, time.Now().Add(-time.Second), newUnitCostEstimator())
 
 	if !truncated {
 		t.Fatal("expected truncation with expired deadline")
@@ -105,9 +105,47 @@ func TestAggregateFromSnapshotExpiredDeadlineReportsTruncation(t *testing.T) {
 func TestAggregateFromSnapshotZeroDeadlineProcessesAll(t *testing.T) {
 	snap := aggregateTestSnapshot(5)
 
-	_, _, _, truncated := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{})
+	_, _, _, truncated := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, newUnitCostEstimator())
 
 	if truncated {
 		t.Fatal("zero deadline must never truncate")
+	}
+}
+
+func TestUnitCostEstimatorMaxUnitsWithin(t *testing.T) {
+	e := newUnitCostEstimator() // seed 0.1s/unit
+
+	if got := e.maxUnitsWithin(time.Second); got != 10 {
+		t.Fatalf("maxUnitsWithin(1s)=%d, want 10", got)
+	}
+	// Never below the spec minimum of two, even for a tiny or expired budget.
+	if got := e.maxUnitsWithin(time.Millisecond); got != 2 {
+		t.Fatalf("maxUnitsWithin(1ms)=%d, want 2 (floor)", got)
+	}
+	if got := e.maxUnitsWithin(-time.Second); got != 2 {
+		t.Fatalf("maxUnitsWithin(-1s)=%d, want 2 (floor)", got)
+	}
+}
+
+func TestUnitCostEstimatorObserveConverges(t *testing.T) {
+	e := newUnitCostEstimator() // seed 0.1s/unit
+
+	// A cheaper-than-seed observation must pull the estimate down, letting more
+	// units fit the budget on the next pass.
+	before := e.maxUnitsWithin(time.Second)
+	for range 20 {
+		e.observe(200*time.Millisecond, 10) // 0.02s/unit
+	}
+	after := e.maxUnitsWithin(time.Second)
+	if after <= before {
+		t.Fatalf("estimate did not converge down: before=%d after=%d units/sec", before, after)
+	}
+
+	// Degenerate inputs are ignored, not divided by.
+	steady := e.perUnitSeconds
+	e.observe(0, 10)
+	e.observe(time.Second, 0)
+	if e.perUnitSeconds != steady {
+		t.Fatalf("degenerate observe mutated estimate: %v -> %v", steady, e.perUnitSeconds)
 	}
 }

@@ -48,9 +48,56 @@ func orderedGroups(snap *Snapshot) []aggregationGroup {
 	return groups
 }
 
-func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool) {
+// seedPerUnitSeconds is a conservative starting cost for one aggregation unit
+// (one raw signature or one child proof). It only governs the first pass, before
+// any real timing is observed: a high seed makes that pass trim rather than risk
+// spending the whole session budget on a single group. The estimate then
+// converges to the real prover cost of whatever hardware runs the node.
+const seedPerUnitSeconds = 0.1
+
+// unitCostEstimator tracks observed per-unit aggregation-proving time so each pass
+// can be sized to the remaining session budget. The single-threaded worker holds
+// one across dispatches. No fixed unit cap would hold across machines and
+// validator-set sizes, so it self-calibrates instead.
+type unitCostEstimator struct {
+	perUnitSeconds float64
+}
+
+func newUnitCostEstimator() *unitCostEstimator {
+	return &unitCostEstimator{perUnitSeconds: seedPerUnitSeconds}
+}
+
+// maxUnitsWithin reports how many units fit in the remaining budget at the current
+// estimate. It never returns below the spec minimum of two, so a group can always
+// still produce a valid aggregate.
+func (e *unitCostEstimator) maxUnitsWithin(budget time.Duration) int {
+	if e == nil || e.perUnitSeconds <= 0 || budget <= 0 {
+		return 2
+	}
+	fit := int(budget.Seconds() / e.perUnitSeconds)
+	if fit < 2 {
+		return 2
+	}
+	return fit
+}
+
+// observe folds a completed aggregation's realized per-unit cost into the estimate
+// with an exponential moving average, damping single-pass noise.
+func (e *unitCostEstimator) observe(duration time.Duration, units int) {
+	if e == nil || units <= 0 || duration <= 0 {
+		return
+	}
+	const alpha = 0.3
+	sample := duration.Seconds() / float64(units)
+	e.perUnitSeconds = alpha*sample + (1-alpha)*e.perUnitSeconds
+}
+
+func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool) {
 	if snap == nil || cache == nil {
 		return nil, nil, nil, false
+	}
+	if estimator == nil {
+		estimator = newUnitCostEstimator()
 	}
 
 	var newAggregates []*types.SignedAggregatedAttestation
@@ -86,9 +133,16 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 				return
 			}
 
+			// Bound this pass to what fits the remaining session budget at the
+			// current per-unit estimate. Child proofs go in first (most coverage
+			// per unit); fresh raw signatures take whatever budget is left and the
+			// rest are deferred to the next pass. A smaller aggregate over the
+			// included participants is still spec-valid.
+			remaining := estimator.maxUnitsWithin(time.Until(deadline))
+
 			covered := make(map[uint64]bool)
-			selectChildProofs(newEntry, targetState, childProofsBuf, covered, cache)
-			selectChildProofs(knownEntry, targetState, childProofsBuf, covered, cache)
+			selectChildProofs(newEntry, targetState, childProofsBuf, covered, cache, &remaining)
+			selectChildProofs(knownEntry, targetState, childProofsBuf, covered, cache, &remaining)
 
 			if gossipEntry != nil && len(gossipEntry.Signatures) > 0 {
 				sortedSigs := make([]store.AttestationSignatureEntry, len(gossipEntry.Signatures))
@@ -98,6 +152,9 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 				})
 
 				for _, sigEntry := range sortedSigs {
+					if remaining <= 0 {
+						break
+					}
 					if covered[sigEntry.ValidatorID] {
 						continue
 					}
@@ -123,6 +180,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 					*rawPubkeysBuf = append(*rawPubkeysBuf, pk)
 					*rawSigsBuf = append(*rawSigsBuf, sigHandle)
 					*rawIDsBuf = append(*rawIDsBuf, sigEntry.ValidatorID)
+					remaining--
 				}
 			}
 
@@ -146,6 +204,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 					slot, len(*rawIDsBuf), len(*childProofsBuf), aggDuration, err)
 				return
 			}
+			estimator.observe(aggDuration, len(*rawIDsBuf)+len(*childProofsBuf))
 
 			allIDs := make([]uint64, 0, len(*rawIDsBuf)+len(covered))
 			allIDs = append(allIDs, (*rawIDsBuf)...)
@@ -177,8 +236,18 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 				Proof:    proof,
 			})
 
+			// Only retire gossip signatures whose vote made it into this proof.
+			// Signatures the budget deferred stay in the store for the next pass;
+			// retiring them here would drop those votes silently.
 			if gossipEntry != nil {
+				represented := make(map[uint64]bool, len(allIDs))
+				for _, vid := range allIDs {
+					represented[vid] = true
+				}
 				for _, sig := range gossipEntry.Signatures {
+					if !represented[sig.ValidatorID] {
+						continue
+					}
 					keysToDelete = append(keysToDelete, store.AttestationDeleteKey{
 						ValidatorID: sig.ValidatorID,
 						DataRoot:    dataRoot,
