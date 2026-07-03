@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/geanlabs/gean/internal/shadow"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -25,7 +26,7 @@ func TestRunWorkerReturnsWhenDispatchChannelCloses(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		RunWorker(context.Background(), dispatches, nil, nil, nil, nil)
+		RunWorker(context.Background(), dispatches, nil, nil, nil, nil, shadow.Rates{})
 		close(done)
 	}()
 
@@ -39,7 +40,7 @@ func TestRunWorkerSkipsNilSnapshot(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		RunWorker(context.Background(), dispatches, nil, nil, nil, nil)
+		RunWorker(context.Background(), dispatches, nil, nil, nil, nil, shadow.Rates{})
 		close(done)
 	}()
 

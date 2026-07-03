@@ -31,6 +31,91 @@ func TestParseConfig_ValidDefaults(t *testing.T) {
 	if cfg.IsAggregator || cfg.CommitteeCount != 1 || cfg.DataDir != "./data" || len(cfg.AggregateSubnetIDs) != 0 {
 		t.Fatalf("unexpected role/storage defaults: %+v", cfg)
 	}
+	if cfg.ShadowAggregateSignaturesRate != 0 || cfg.ShadowVerifySignatureRate != 0 || cfg.ShadowVerifyAggregatedSignaturesRate != 0 {
+		t.Fatalf("shadow rates must default to disabled: %+v", cfg)
+	}
+}
+
+func TestParseConfig_ShadowRates(t *testing.T) {
+	args := append(validFlagArgs(),
+		"--shadow-xmss-aggregate-signatures-rate", "5",
+		"--shadow-xmss-verify-signature-rate", "2",
+		"--shadow-xmss-verify-aggregated-signatures-rate", "100",
+	)
+	var stderr bytes.Buffer
+	cfg, err := parseConfig(args, &stderr)
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if cfg.ShadowAggregateSignaturesRate != 5 ||
+		cfg.ShadowVerifySignatureRate != 2 ||
+		cfg.ShadowVerifyAggregatedSignaturesRate != 100 {
+		t.Fatalf("unexpected shadow rates: %+v", cfg)
+	}
+}
+
+func TestParseConfig_ShadowRatesFromEnv(t *testing.T) {
+	t.Setenv("GEAN_SHADOW_XMSS_AGGREGATE_SIGNATURES_RATE", "7.5")
+	t.Setenv("GEAN_SHADOW_XMSS_VERIFY_SIGNATURE_RATE", "3")
+	t.Setenv("GEAN_SHADOW_XMSS_VERIFY_AGGREGATED_SIGNATURES_RATE", "9")
+
+	var stderr bytes.Buffer
+	cfg, err := parseConfig(validFlagArgs(), &stderr)
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if cfg.ShadowAggregateSignaturesRate != 7.5 ||
+		cfg.ShadowVerifySignatureRate != 3 ||
+		cfg.ShadowVerifyAggregatedSignaturesRate != 9 {
+		t.Fatalf("env rates not applied: %+v", cfg)
+	}
+}
+
+func TestParseConfig_ShadowRateFlagBeatsEnv(t *testing.T) {
+	t.Setenv("GEAN_SHADOW_XMSS_AGGREGATE_SIGNATURES_RATE", "7.5")
+
+	args := append(validFlagArgs(), "--shadow-xmss-aggregate-signatures-rate", "2")
+	var stderr bytes.Buffer
+	cfg, err := parseConfig(args, &stderr)
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if cfg.ShadowAggregateSignaturesRate != 2 {
+		t.Fatalf("flag should win over env, got %v", cfg.ShadowAggregateSignaturesRate)
+	}
+}
+
+func TestParseConfig_InvalidShadowEnv(t *testing.T) {
+	t.Setenv("GEAN_SHADOW_XMSS_VERIFY_SIGNATURE_RATE", "not-a-number")
+
+	var stderr bytes.Buffer
+	_, err := parseConfig(validFlagArgs(), &stderr)
+	if err == nil {
+		t.Fatal("expected unparseable env rate to fail")
+	}
+	if !strings.Contains(stderr.String(), "GEAN_SHADOW_XMSS_VERIFY_SIGNATURE_RATE") {
+		t.Fatalf("env error message not found:\n%s", stderr.String())
+	}
+}
+
+func TestParseConfig_NegativeShadowRate(t *testing.T) {
+	for _, flag := range []string{
+		"--shadow-xmss-aggregate-signatures-rate",
+		"--shadow-xmss-verify-signature-rate",
+		"--shadow-xmss-verify-aggregated-signatures-rate",
+	} {
+		t.Run(flag, func(t *testing.T) {
+			args := append(validFlagArgs(), flag, "-1")
+			var stderr bytes.Buffer
+			_, err := parseConfig(args, &stderr)
+			if err == nil {
+				t.Fatal("expected negative shadow rate to fail")
+			}
+			if !strings.Contains(stderr.String(), flag+" must not be negative") {
+				t.Fatalf("negative rate message not found:\n%s", stderr.String())
+			}
+		})
+	}
 }
 
 func TestParseConfig_MissingRequiredFlags(t *testing.T) {
