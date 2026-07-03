@@ -10,6 +10,7 @@ import (
 	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/node"
 	"github.com/geanlabs/gean/internal/role"
+	"github.com/geanlabs/gean/internal/shadow"
 )
 
 func main() {
@@ -83,7 +84,12 @@ func run(cfg config) error {
 	}
 
 	aggCtl := role.NewWithHook(cfg.IsAggregator, metrics.SetIsAggregator)
-	n := node.New(s, fc, p2pHost, inputs.keyManager, aggCtl, cfg.CommitteeCount)
+	shadowRates := shadow.Rates{
+		AggregateSignatures:        cfg.ShadowAggregateSignaturesRate,
+		VerifySignature:            cfg.ShadowVerifySignatureRate,
+		VerifyAggregatedSignatures: cfg.ShadowVerifyAggregatedSignaturesRate,
+	}
+	n := node.New(s, fc, p2pHost, inputs.keyManager, aggCtl, cfg.CommitteeCount, shadowRates)
 	startNodeNetworking(ctx, n, s, p2pHost, inputs.bootnodes)
 
 	apiAddr, metricsAddr := startHTTPServers(cfg, s, fc, aggCtl)

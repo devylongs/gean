@@ -8,6 +8,7 @@ import (
 
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/metrics"
+	"github.com/geanlabs/gean/internal/shadow"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 	"github.com/geanlabs/gean/xmss"
@@ -82,7 +83,9 @@ func (e *unitCostEstimator) maxUnitsWithin(budget time.Duration) int {
 }
 
 // observe folds a completed aggregation's realized per-unit cost into the estimate
-// with an exponential moving average, damping single-pass noise.
+// with an exponential moving average, damping single-pass noise. Under Shadow the
+// duration includes the modeled prover sleep, so the estimate calibrates to the
+// simulated cost just as it would to real hardware.
 func (e *unitCostEstimator) observe(duration time.Duration, units int) {
 	if e == nil || units <= 0 || duration <= 0 {
 		return
@@ -92,7 +95,7 @@ func (e *unitCostEstimator) observe(duration time.Duration, units int) {
 	e.perUnitSeconds = alpha*sample + (1-alpha)*e.perUnitSeconds
 }
 
-func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool) {
+func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool) {
 	if snap == nil || cache == nil {
 		return nil, nil, nil, false
 	}
@@ -198,6 +201,10 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 
 			aggStart := time.Now()
 			proofBytes, err := xmss.AggregateWithChildren(*rawPubkeysBuf, *rawSigsBuf, *childProofsBuf, dataRootHash, slot)
+			// Charge virtual time for the proving cost Shadow would otherwise not
+			// account; the capacity-1 dispatch channel then drops the next slot's
+			// work if proving can't keep up, exactly as on real hardware.
+			shadowRates.SleepAggregate(len(*rawIDsBuf) + len(*childProofsBuf))
 			aggDuration := time.Since(aggStart)
 			if err != nil {
 				logger.Error(logger.Signature, "aggregate: failed slot=%d raw=%d children=%d duration=%v: %v",

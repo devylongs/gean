@@ -1,10 +1,12 @@
 package main
 
 type options struct {
-	Validators int
-	Nodes      int
-	OutputDir  string
-	BasePort   int
+	Validators   int
+	Nodes        int
+	OutputDir    string
+	BasePort     int
+	GenesisTime  uint64
+	GenesisDelay int
 }
 
 type manifest struct {

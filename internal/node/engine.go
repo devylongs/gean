@@ -12,6 +12,7 @@ import (
 	"github.com/geanlabs/gean/internal/pending"
 	"github.com/geanlabs/gean/internal/proving"
 	"github.com/geanlabs/gean/internal/role"
+	"github.com/geanlabs/gean/internal/shadow"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 	"github.com/geanlabs/gean/xmss"
@@ -37,6 +38,7 @@ type Engine struct {
 	AggCtl              *role.Controller
 	DutyGate            *dutygate.Gate
 	CommitteeCount      uint64
+	Shadow              shadow.Rates
 	Pending             *pending.BlockBuffer
 	PendingAttestations *pending.AttestationBuffer
 
@@ -64,6 +66,7 @@ func New(
 	keys *xmss.KeyManager,
 	aggCtl *role.Controller,
 	committeeCount uint64,
+	shadowRates shadow.Rates,
 ) *Engine {
 	p2p.SetClientGitCommit(gitCommit)
 	e := &Engine{
@@ -74,6 +77,7 @@ func New(
 		AggCtl:                aggCtl,
 		DutyGate:              dutygate.New(logDutyGateEvent),
 		CommitteeCount:        committeeCount,
+		Shadow:                shadowRates,
 		Pending:               pending.NewBlockBuffer(),
 		PendingAttestations:   pending.NewAttestationBuffer(PendingAttestationsPerRootCap, PendingAttestationsTotalCap),
 		BlockCh:               make(chan *types.SignedBlock, 64),

@@ -128,7 +128,7 @@ leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH): leanSpec/.pinned-$(LEAN_S
 
 DOCKER_TAG ?= local
 
-docker-build: ## Build Docker image
+docker-build: ## Build Docker image (also tagged :shadow for the lean-shadow-fuzzer)
 	docker build \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \

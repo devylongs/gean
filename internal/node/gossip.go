@@ -49,6 +49,7 @@ func (e *Engine) onGossipAttestation(att *types.SignedAttestation) {
 	metrics.IncPqSigAttestationSigsTotal()
 	verifyStart := time.Now()
 	err = attestation.VerifyGossipAttestation(e.Store, att.ValidatorID, att.Data, dataRoot, att.Signature[:])
+	e.Shadow.SleepVerify()
 	metrics.ObservePqSigVerificationTime(time.Since(verifyStart).Seconds())
 	if err != nil {
 		metrics.IncPqSigAttestationSigsInvalid()
@@ -79,6 +80,7 @@ func (e *Engine) onGossipAggregatedAttestation(agg *types.SignedAggregatedAttest
 	}
 	verifyStart := time.Now()
 	err := attestation.VerifyAggregatedGossipAttestation(e.Store, agg.Data, agg.Proof.Participants, agg.Proof.Proof)
+	e.Shadow.SleepVerifyAggregated(int(types.BitlistCount(agg.Proof.Participants)))
 	metrics.ObservePqSigAggVerificationTime(time.Since(verifyStart).Seconds())
 	if err != nil {
 		metrics.IncPqSigAggregatedInvalid()
