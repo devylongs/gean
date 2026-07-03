@@ -35,6 +35,10 @@ func RunWorker(
 	publisher Publisher,
 	gate *proving.Gate,
 ) {
+	// One estimator lives across dispatches so it keeps calibrating to this
+	// node's real per-unit prover cost. The worker is single-threaded, so no
+	// locking is needed.
+	estimator := newUnitCostEstimator()
 	for {
 		select {
 		case <-ctx.Done():
@@ -62,7 +66,7 @@ func RunWorker(
 			// (and their signature deletes) regrows the next snapshot until
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
-			aggs, payloads, deletes, truncated := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(sessionBudget))
+			aggs, payloads, deletes, truncated := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(sessionBudget), estimator)
 			if gate != nil {
 				gate.Release(false)
 			}
