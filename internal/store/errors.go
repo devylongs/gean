@@ -38,4 +38,6 @@ const (
 	ErrSourceNotAncestorOfTarget
 	ErrTargetNotAncestorOfHead
 	ErrAttestationSlotBeforeHead
+	ErrBlockTooFarInFuture
+	ErrHeadNotDescendantOfFinalized
 )
