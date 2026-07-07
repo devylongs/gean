@@ -29,6 +29,9 @@ func insertValidationHeaders(s *store.ConsensusStore) {
 	s.InsertBlockHeader([32]byte{1}, &types.BlockHeader{Slot: 3})
 	s.InsertBlockHeader([32]byte{2}, &types.BlockHeader{Slot: 4, ParentRoot: [32]byte{1}})
 	s.InsertBlockHeader([32]byte{3}, &types.BlockHeader{Slot: 5, ParentRoot: [32]byte{2}})
+	// Anchor finalization at the chain base so a valid head descends from it; the
+	// finalized-descendant admission check needs a reachable finalized block.
+	s.SetLatestFinalized(&types.Checkpoint{Root: [32]byte{1}, Slot: 3})
 }
 
 func TestValidateAttestationDataAvailability(t *testing.T) {
@@ -115,6 +118,22 @@ func TestValidateAttestationDataSlotMismatches(t *testing.T) {
 				t.Fatalf("error=%v, want StoreError kind %v", err, tc.kind)
 			}
 		})
+	}
+}
+
+func TestValidateAttestationDataHeadOffFinalized(t *testing.T) {
+	s := makeValidationStore()
+	s.SetTime(30)
+	insertValidationHeaders(s)
+	// Finalize a slot-4 fork block off the chain base. The head {3} descends from
+	// {1}, not from this finalized block, so admission must reject it.
+	s.InsertBlockHeader([32]byte{9}, &types.BlockHeader{Slot: 4, ParentRoot: [32]byte{1}})
+	s.SetLatestFinalized(&types.Checkpoint{Root: [32]byte{9}, Slot: 4})
+
+	err := attestation.ValidateAttestationData(s, makeValidAttestationData())
+	se, ok := err.(*store.StoreError)
+	if !ok || se.Kind != store.ErrHeadNotDescendantOfFinalized {
+		t.Fatalf("error=%v, want ErrHeadNotDescendantOfFinalized", err)
 	}
 }
 
