@@ -28,8 +28,10 @@ type justifiabilityFixture struct {
 }
 
 type justifiabilityOutput struct {
-	Delta         uint64 `json:"delta"`
-	IsJustifiable bool   `json:"isJustifiable"`
+	// delta = slot - finalizedSlot, signed: a slot before the finalized boundary
+	// yields a negative delta.
+	Delta         int64 `json:"delta"`
+	IsJustifiable bool  `json:"isJustifiable"`
 }
 
 // TestSpecJustifiability walks the justifiability fixture directory and asserts
@@ -62,7 +64,7 @@ func TestSpecJustifiability(t *testing.T) {
 		for _, fx := range outer {
 			fx := fx
 			t.Run(base, func(t *testing.T) {
-				expectedDelta := fx.Slot - fx.FinalizedSlot
+				expectedDelta := int64(fx.Slot) - int64(fx.FinalizedSlot)
 				if fx.Output.Delta != expectedDelta {
 					t.Errorf("fixture delta inconsistent: slot=%d finalizedSlot=%d computedDelta=%d fixtureDelta=%d",
 						fx.Slot, fx.FinalizedSlot, expectedDelta, fx.Output.Delta)
