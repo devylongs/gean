@@ -41,7 +41,14 @@ func ProcessAttestations(state *types.State, attestations []*types.AggregatedAtt
 
 	validatorCount := int(state.NumValidators())
 	if validatorCount == 0 {
-		return nil
+		return ErrEmptyValidatorRegistry
+	}
+
+	// The flat vote bitlist segments into one block of validatorCount bits per
+	// tracked root; a mismatched length means the state is malformed and cannot be
+	// interpreted, so reject rather than read past or short of a segment.
+	if int(types.BitlistLen(state.JustificationsValidators)) != len(state.JustificationsRoots)*validatorCount {
+		return ErrJustificationVotesLengthMismatch
 	}
 
 	for _, root := range state.JustificationsRoots {

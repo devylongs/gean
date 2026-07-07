@@ -108,6 +108,10 @@ var ErrEmptyAggregationBits = fmt.Errorf("attestation aggregation bits have no s
 
 var ErrNoValidators = fmt.Errorf("state has no validators")
 var ErrZeroHashInJustificationRoots = fmt.Errorf("zero hash found in justifications_roots")
+
+var ErrEmptyValidatorRegistry = fmt.Errorf("state holds no validators to segment justification votes against")
+
+var ErrJustificationVotesLengthMismatch = fmt.Errorf("justifications_validators length does not equal justifications_roots count times validator count")
 var ErrMalformedState = fmt.Errorf("malformed state")
 var ErrMalformedBlock = fmt.Errorf("malformed block")
 

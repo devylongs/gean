@@ -216,6 +216,13 @@ func runSignatureTest(t *testing.T, tt *sigTest) {
 
 	signedBlock := tt.SignedBlock.toSignedBlock()
 
+	// Place the store clock at the block's slot, as the live node does before
+	// importing an on-time block; otherwise the future-horizon guard would reject a
+	// block whose slot leads the default-zero clock.
+	if signedBlock != nil && signedBlock.Block != nil {
+		s.SetTime(signedBlock.Block.Slot * types.IntervalsPerSlot)
+	}
+
 	// 5. Call OnBlock WITH signature verification.
 	err = blockprocessor.OnBlock(s, signedBlock)
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/geanlabs/gean/internal/types"
@@ -156,6 +157,12 @@ func (pb *PayloadBuffer) ExtractLatestAttestations() map[uint64]*types.Attestati
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 
+	// Each validator keeps the vote with the highest (slot, canonical data root).
+	// An equivocator can cast two distinct votes at one slot; resolving that tie by
+	// the larger data root makes the extracted set a pure function of the pool,
+	// independent of insertion order, so every node runs fork choice on the same LMD
+	// view. dataRoot is the attestation-data hash-tree-root (the buffer key).
+	chosenRoot := make(map[uint64][32]byte)
 	for _, dataRoot := range pb.order {
 		entry, ok := pb.data[dataRoot]
 		if !ok || !validPayloadEntry(entry) {
@@ -167,16 +174,29 @@ func (pb *PayloadBuffer) ExtractLatestAttestations() map[uint64]*types.Attestati
 			}
 			participantLen := types.BitlistLen(proof.Participants)
 			for vid := range participantLen {
-				if types.BitlistGet(proof.Participants, vid) {
-					existing, ok := result[vid]
-					if !ok || existing.Slot < entry.Data.Slot {
-						result[vid] = copyAttestationData(entry.Data)
-					}
+				if !types.BitlistGet(proof.Participants, vid) {
+					continue
 				}
+				if existing, ok := result[vid]; ok &&
+					!outranksVote(entry.Data.Slot, dataRoot, existing.Slot, chosenRoot[vid]) {
+					continue
+				}
+				result[vid] = copyAttestationData(entry.Data)
+				chosenRoot[vid] = dataRoot
 			}
 		}
 	}
 	return result
+}
+
+// outranksVote reports whether (slotA, rootA) is the later LMD vote than
+// (slotB, rootB): a higher slot wins, and an equal-slot tie breaks toward the
+// larger canonical data root.
+func outranksVote(slotA uint64, rootA [32]byte, slotB uint64, rootB [32]byte) bool {
+	if slotA != slotB {
+		return slotA > slotB
+	}
+	return bytes.Compare(rootA[:], rootB[:]) > 0
 }
 
 func (pb *PayloadBuffer) PruneBelow(finalizedSlot uint64) int {

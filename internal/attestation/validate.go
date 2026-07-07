@@ -60,6 +60,10 @@ func errTargetNotAncestorOfHead() error {
 	return &store.StoreError{Kind: store.ErrTargetNotAncestorOfHead, Message: "target checkpoint is not an ancestor of head"}
 }
 
+func errHeadNotDescendantOfFinalized() error {
+	return &store.StoreError{Kind: store.ErrHeadNotDescendantOfFinalized, Message: "head checkpoint does not descend from the finalized block"}
+}
+
 func ValidateAttestationData(s *store.ConsensusStore, data *types.AttestationData) error {
 	if err := validateDataShape(data); err != nil {
 		return err
@@ -98,6 +102,12 @@ func ValidateAttestationData(s *store.ConsensusStore, data *types.AttestationDat
 	}
 	if !checkpointIsAncestor(s, data.Target, data.Head) {
 		return errTargetNotAncestorOfHead()
+	}
+	// Fork choice only ever descends from the finalized block, so an orphaned head
+	// carries no weight. Rejecting it at admission mirrors the prune predicate and
+	// keeps a re-gossiped below-finalized aggregate from re-entering the pool.
+	if finalized := s.LatestFinalized(); finalized != nil && !checkpointIsAncestor(s, finalized, data.Head) {
+		return errHeadNotDescendantOfFinalized()
 	}
 	// A vote cannot have observed its head before that head existed. This lower
 	// bound also keeps the wire slot clear of the 2**64 interval-multiply overflow.

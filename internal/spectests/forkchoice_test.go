@@ -499,6 +499,14 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 			// Promote new payloads to known (so next updateHead sees them).
 			s.PromoteNewToKnown()
 
+			// Reflect the just-promoted votes into the fork-choice known tracker,
+			// as the Engine's next updateHead re-derives known votes from the
+			// promoted pool. Without this, a vote gossiped as "new" is promoted in
+			// the payload pool but stays absent from the tracker the checks read.
+			for vid, data := range s.ExtractLatestKnownAttestations() {
+				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
+			}
+
 			// Validate checks if present.
 			if step.Checks != nil {
 				validateChecks(t, i, step.Checks, s, fc, labelRoots)
