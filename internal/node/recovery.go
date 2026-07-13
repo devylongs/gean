@@ -68,9 +68,8 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 	if state == nil {
 		return
 	}
-	// Filter votes against the head's justified checkpoint: a future block on this head
-	// can only pack votes whose source equals it, so votes with any other source can no
-	// longer advance justification and are not worth recovering.
+	// The head post-state's justified checkpoint is the source selectRecoveryCandidates
+	// filters votes against.
 	headState := e.Store.GetState(e.Store.Head())
 	if headState == nil || headState.LatestJustified == nil {
 		return
