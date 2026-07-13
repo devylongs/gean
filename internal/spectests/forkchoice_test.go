@@ -35,6 +35,18 @@ func carriesMockedProof(proof []byte) bool {
 	return bytes.HasPrefix(proof, mockedProofSentinel)
 }
 
+// earliestAdmissibleInterval is the lowest store time at which a slot-N attestation
+// clears ValidateAttestationData's future check: admission allows
+// slot*INTERVALS_PER_SLOT <= time + GOSSIP_DISPARITY_INTERVALS, so the vote is
+// admissible one disparity interval before its slot starts.
+func earliestAdmissibleInterval(slot uint64) uint64 {
+	start := slot * types.IntervalsPerSlot
+	if start < types.GossipDisparityIntervals {
+		return 0
+	}
+	return start - types.GossipDisparityIntervals
+}
+
 type fcTest struct {
 	Network     string   `json:"network"`
 	LeanEnv     string   `json:"leanEnv"`
@@ -147,22 +159,23 @@ type fcAggregatedAttestation struct {
 }
 
 type fcChecks struct {
-	Time                     *uint64              `json:"time,omitempty"`
-	HeadSlot                 *uint64              `json:"headSlot,omitempty"`
-	HeadRoot                 *string              `json:"headRoot,omitempty"`
-	HeadRootLabel            *string              `json:"headRootLabel,omitempty"`
-	LatestJustifiedSlot      *uint64              `json:"latestJustifiedSlot,omitempty"`
-	LatestJustifiedRoot      *string              `json:"latestJustifiedRoot,omitempty"`
-	LatestJustifiedRootLabel *string              `json:"latestJustifiedRootLabel,omitempty"`
-	LatestFinalizedSlot      *uint64              `json:"latestFinalizedSlot,omitempty"`
-	LatestFinalizedRoot      *string              `json:"latestFinalizedRoot,omitempty"`
-	LatestFinalizedRootLabel *string              `json:"latestFinalizedRootLabel,omitempty"`
-	SafeTarget               *string              `json:"safeTarget,omitempty"`
-	SafeTargetSlot           *uint64              `json:"safeTargetSlot,omitempty"`
-	SafeTargetRootLabel      *string              `json:"safeTargetRootLabel,omitempty"`
-	AttestationTargetSlot    *uint64              `json:"attestationTargetSlot,omitempty"`
-	AttestationChecks        []fcAttestationCheck `json:"attestationChecks,omitempty"`
-	LexicographicHeadAmong   []string             `json:"lexicographicHeadAmong,omitempty"`
+	Time                           *uint64              `json:"time,omitempty"`
+	HeadSlot                       *uint64              `json:"headSlot,omitempty"`
+	HeadRoot                       *string              `json:"headRoot,omitempty"`
+	HeadRootLabel                  *string              `json:"headRootLabel,omitempty"`
+	LatestJustifiedSlot            *uint64              `json:"latestJustifiedSlot,omitempty"`
+	LatestJustifiedRoot            *string              `json:"latestJustifiedRoot,omitempty"`
+	LatestJustifiedRootLabel       *string              `json:"latestJustifiedRootLabel,omitempty"`
+	LatestFinalizedSlot            *uint64              `json:"latestFinalizedSlot,omitempty"`
+	LatestFinalizedRoot            *string              `json:"latestFinalizedRoot,omitempty"`
+	LatestFinalizedRootLabel       *string              `json:"latestFinalizedRootLabel,omitempty"`
+	SafeTarget                     *string              `json:"safeTarget,omitempty"`
+	SafeTargetSlot                 *uint64              `json:"safeTargetSlot,omitempty"`
+	SafeTargetRootLabel            *string              `json:"safeTargetRootLabel,omitempty"`
+	AttestationTargetSlot          *uint64              `json:"attestationTargetSlot,omitempty"`
+	AttestationChecks              []fcAttestationCheck `json:"attestationChecks,omitempty"`
+	LexicographicHeadAmong         []string             `json:"lexicographicHeadAmong,omitempty"`
+	CanonicalEquivocationHeadAmong []string             `json:"canonicalEquivocationHeadAmong,omitempty"`
 }
 
 // fcAttestationCheck mirrors the spec's per-validator attestation-state
@@ -524,13 +537,14 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				Source: &types.Checkpoint{Root: parseHexRoot(att.Data.Source.Root), Slot: att.Data.Source.Slot},
 			}
 
-			// For valid steps, advance time so attestation passes the future check.
-			// Invalid steps keep current time so the time-bound branch of
-			// ValidateAttestationData fires as expected on fixtures designed to
-			// exercise that rejection path.
+			// For valid steps, advance time just enough for the attestation to clear
+			// the future-admission check. Stop at the earliest admissible interval
+			// (one gossip-disparity interval before the vote's slot start), never at
+			// the slot start itself: landing there would coincide with a following
+			// tick's target and swallow that tick's promotion. Invalid steps keep the
+			// current time so the rejection path still fires.
 			if step.Valid {
-				minTime := attData.Slot * types.IntervalsPerSlot
-				if s.Time() < minTime {
+				if minTime := earliestAdmissibleInterval(attData.Slot); s.Time() < minTime {
 					s.SetTime(minTime)
 				}
 			}
@@ -602,11 +616,11 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				Source: &types.Checkpoint{Root: parseHexRoot(att.Data.Source.Root), Slot: att.Data.Source.Slot},
 			}
 
-			// For valid steps, advance time so attestation passes the future check.
-			// Invalid steps keep current time to exercise the time-bound branch.
+			// Advance only to the earliest admissible interval (see the individual
+			// attestation case): stopping short of the vote's slot start keeps a later
+			// tick's promotion from being skipped. Invalid steps keep the current time.
 			if step.Valid {
-				minTime := attData.Slot * types.IntervalsPerSlot
-				if s.Time() < minTime {
+				if minTime := earliestAdmissibleInterval(attData.Slot); s.Time() < minTime {
 					s.SetTime(minTime)
 				}
 			}
@@ -669,40 +683,52 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 
 		case "tick":
 			// step.Time is wall-clock seconds since the UNIX epoch; step.Interval
-			// is a raw interval count. Convert seconds to intervals before storing
-			// so subsequent assertions on store.time match the simulator's
-			// checks.time field.
+			// is a raw interval count. Convert to a target interval count.
+			var target uint64
 			switch {
 			case step.Time != nil:
 				genesisMs := s.Config().GenesisTime * 1000
 				timestampMs := *step.Time * 1000
-				if timestampMs < genesisMs {
-					s.SetTime(0)
-				} else {
-					s.SetTime((timestampMs - genesisMs) / types.MillisecondsPerInterval)
+				if timestampMs >= genesisMs {
+					target = (timestampMs - genesisMs) / types.MillisecondsPerInterval
 				}
 			case step.Interval != nil:
-				s.SetTime(*step.Interval)
+				target = *step.Interval
 			default:
 				t.Fatalf("step %d: tick step without time or interval", i)
 			}
 
-			// Mirror the interval responsibilities Engine.onTick drives in the
-			// running node. Promotion of the new-vote pool into the known pool is
-			// what flips the head onto freshly gossiped votes, and it only happens
-			// at the slot boundary: interval 4 always, interval 0 when this slot is
-			// ours to propose. The head is then recomputed at interval 0/4.
-			interval := s.Time() % types.IntervalsPerSlot
+			// Advance one interval at a time, mirroring leanSpec on_tick. Stepping is
+			// load-bearing: jumping straight to the target would skip the intervening
+			// slot-boundary intervals whose actions promote the new-vote pool into the
+			// known pool and recompute the head. Promotion happens at interval 4 always,
+			// and at interval 0 when a proposal has landed — the latter only on the final
+			// interval, matching the spec's should_signal_proposal gate.
 			hasProposal := step.HasProposal != nil && *step.HasProposal
-			if interval == 4 || (interval == 0 && hasProposal) {
-				s.PromoteNewToKnown()
-			}
-			if interval == 0 || interval == 4 {
-				knownAtts := s.ExtractLatestKnownAttestations()
-				for vid, data := range knownAtts {
-					fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
+			for s.Time() < target {
+				next := s.Time() + 1
+				s.SetTime(next)
+				interval := next % types.IntervalsPerSlot
+				signalProposal := hasProposal && next == target
+				if interval == 4 || (interval == 0 && signalProposal) {
+					s.PromoteNewToKnown()
 				}
-				simulateUpdateHead(s, fc, s.LatestJustified().Root)
+				if interval == 0 || interval == 4 {
+					knownAtts := s.ExtractLatestKnownAttestations()
+					for vid, data := range knownAtts {
+						fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
+					}
+					simulateUpdateHead(s, fc, s.LatestJustified().Root)
+				}
+			}
+			// A tick to at or behind the clock still pins store.time so a later
+			// time check reads the fixture's value.
+			if target < s.Time() {
+				s.SetTime(target)
+			}
+
+			if step.Checks != nil {
+				validateChecks(t, i, step.Checks, s, fc, labelRoots)
 			}
 
 		default:
@@ -838,8 +864,75 @@ func validateChecks(t *testing.T, stepIdx int, checks *fcChecks, s *store.Consen
 		}
 	}
 
+	if len(checks.CanonicalEquivocationHeadAmong) > 0 {
+		validateCanonicalEquivocationHead(t, stepIdx, checks.CanonicalEquivocationHeadAmong, s, headRoot, labelRoots)
+	}
+
 	for _, ac := range checks.AttestationChecks {
 		validateAttestationCheck(t, stepIdx, s, fc, ac)
+	}
+}
+
+// validateCanonicalEquivocationHead mirrors leanSpec _validate_canonical_equivocation_head:
+// the equal-slot equivocation tie breaks toward the fork carrying the largest
+// attestation-data root, read from the accepted aggregated pool rather than hardcoded,
+// so the assertion is independent of the signature scheme (roots embed validator keys).
+func validateCanonicalEquivocationHead(t *testing.T, stepIdx int, forkLabels []string, s *store.ConsensusStore, headRoot [32]byte, labelRoots map[string][32]byte) {
+	t.Helper()
+	if len(forkLabels) < 2 {
+		t.Fatalf("step %d check: canonicalEquivocationHeadAmong needs >=2 forks, got %v", stepIdx, forkLabels)
+	}
+
+	forkRoots := make(map[string][32]byte, len(forkLabels))
+	for _, label := range forkLabels {
+		root, ok := labelRoots[label]
+		if !ok {
+			t.Fatalf("step %d check: canonicalEquivocationHeadAmong label %q not in block registry", stepIdx, label)
+		}
+		forkRoots[label] = root
+	}
+
+	// Largest attestation-data root per fork — the key ExtractLatestAttestations sorts on.
+	// Scan the whole accepted aggregated pool (new + promoted): a tick check may run
+	// before the slot-boundary promotion moves votes from the new pool into the known one.
+	maxAttRoot := make(map[string][32]byte, len(forkLabels))
+	scan := func(entries map[[32]byte]*store.PayloadEntry) {
+		for _, entry := range entries {
+			if entry.Data == nil || entry.Data.Target == nil {
+				continue
+			}
+			dataRoot, err := entry.Data.HashTreeRoot()
+			if err != nil {
+				t.Fatalf("step %d check: attestation-data root: %v", stepIdx, err)
+			}
+			for label, forkRoot := range forkRoots {
+				if entry.Data.Target.Root != forkRoot {
+					continue
+				}
+				if cur, seen := maxAttRoot[label]; !seen || bytes.Compare(dataRoot[:], cur[:]) > 0 {
+					maxAttRoot[label] = dataRoot
+				}
+			}
+		}
+	}
+	scan(s.NewPayloads.Entries())
+	scan(s.KnownPayloads.Entries())
+
+	var winner string
+	var winnerRoot [32]byte
+	for _, label := range forkLabels {
+		root, ok := maxAttRoot[label]
+		if !ok {
+			t.Fatalf("step %d check: canonicalEquivocationHeadAmong fork %q has no attestation targeting it in the accepted aggregated pool", stepIdx, label)
+		}
+		if winner == "" || bytes.Compare(root[:], winnerRoot[:]) > 0 {
+			winner, winnerRoot = label, root
+		}
+	}
+
+	if headRoot != forkRoots[winner] {
+		t.Fatalf("step %d check: canonical equivocation tiebreak: head 0x%x, want fork %q 0x%x (largest attestation-data root)",
+			stepIdx, headRoot, winner, forkRoots[winner])
 	}
 }
 
