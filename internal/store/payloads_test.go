@@ -32,6 +32,41 @@ func TestPayloadBufferPushAndExtract(t *testing.T) {
 	}
 }
 
+// An equivocator can cast two distinct votes at one slot. Resolving that tie by the
+// larger canonical data root (leanSpec #1181) must make the extracted LMD view a pure
+// function of the pool, independent of insertion order, so every node runs fork choice
+// on the same set.
+func TestPayloadBufferEqualSlotTieKeepsLargerDataRoot(t *testing.T) {
+	small := [32]byte{0x01}
+	large := [32]byte{0x02}
+	smallData := &types.AttestationData{Slot: 7, Head: &types.Checkpoint{Root: small, Slot: 6}}
+	largeData := &types.AttestationData{Slot: 7, Head: &types.Checkpoint{Root: large, Slot: 6}}
+	bits := types.BitlistFromIndices([]uint64{0})
+
+	for _, largeFirst := range []bool{false, true} {
+		pb := store.NewPayloadBuffer(10)
+		push := func(root [32]byte, d *types.AttestationData) {
+			pb.Push(root, d, &types.SingleMessageAggregate{Participants: bits, Proof: []byte{0x01}})
+		}
+		if largeFirst {
+			push(large, largeData)
+			push(small, smallData)
+		} else {
+			push(small, smallData)
+			push(large, largeData)
+		}
+
+		got := pb.ExtractLatestAttestations()[0]
+		if got == nil {
+			t.Fatalf("largeFirst=%v: validator 0 has no extracted vote", largeFirst)
+		}
+		if got.Head.Root != large {
+			t.Fatalf("largeFirst=%v: kept vote with head 0x%x, want larger-root vote 0x%x",
+				largeFirst, got.Head.Root[:2], large[:2])
+		}
+	}
+}
+
 func TestPayloadBufferDataOnlyHasNoWeight(t *testing.T) {
 	pb := store.NewPayloadBuffer(10)
 	root := [32]byte{1}
