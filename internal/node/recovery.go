@@ -48,8 +48,12 @@ func (e *Engine) runRecoveryWorker(ctx context.Context) {
 }
 
 func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.SignedBlock) {
-	if e.GetSyncStatus() != syncer.SyncSynced || signedBlock == nil ||
-		signedBlock.Block == nil || signedBlock.Block.Body == nil ||
+	// Only a synced aggregator deconstructs blocks: it re-broadcasts the recovered
+	// proofs, while non-aggregators rely on the gossip path. Recovery is skipped while
+	// syncing, when historical blocks flood this path and the justified anchor is still
+	// moving, so recovered votes would not match a live head.
+	if e.AggCtl == nil || !e.AggCtl.Get() || e.GetSyncStatus() != syncer.SyncSynced ||
+		signedBlock == nil || signedBlock.Block == nil || signedBlock.Block.Body == nil ||
 		signedBlock.Proof == nil || len(signedBlock.Proof.Proof) == 0 {
 		return
 	}
@@ -64,6 +68,12 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 	if state == nil {
 		return
 	}
+	// The head post-state's justified checkpoint is the source selectRecoveryCandidates
+	// filters votes against.
+	headState := e.Store.GetState(e.Store.Head())
+	if headState == nil || headState.LatestJustified == nil {
+		return
+	}
 	pubkeys, err := e.blockProofPubkeys(block, state)
 	if err != nil {
 		return
@@ -71,33 +81,7 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 
 	newEntries := e.Store.NewPayloads.Entries()
 	knownEntries := e.Store.KnownPayloads.Entries()
-	justified := e.Store.LatestJustified().Slot
-	candidates := make([]recoveryCandidate, 0, len(block.Body.Attestations))
-	for _, att := range block.Body.Attestations {
-		if att == nil || att.Data == nil || att.Data.Target == nil || att.Data.Target.Slot <= justified {
-			continue
-		}
-		root, err := att.Data.HashTreeRoot()
-		if err != nil {
-			continue
-		}
-		covered := localCoverage(newEntries[root], knownEntries[root])
-		newCount := 0
-		for _, index := range types.BitlistIndices(att.AggregationBits) {
-			if !covered[index] {
-				newCount++
-			}
-		}
-		if newCount > 0 {
-			candidates = append(candidates, recoveryCandidate{att: att, root: root, newCount: newCount})
-		}
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].newCount > candidates[j].newCount
-	})
-	if len(candidates) > maxRecoverySplits {
-		candidates = candidates[:maxRecoverySplits]
-	}
+	candidates := selectRecoveryCandidates(block.Body.Attestations, headState.LatestJustified, newEntries, knownEntries)
 
 	for _, candidate := range candidates {
 		if ctx.Err() != nil {
@@ -143,7 +127,7 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 			metrics.IncProofOperation("recovery", "success")
 			metrics.ObserveProofSize("type1", len(proof))
 			e.Store.NewPayloads.Push(candidate.root, candidate.att.Data, recovered)
-			if e.AggCtl != nil && e.AggCtl.Get() && e.P2P != nil {
+			if e.P2P != nil {
 				_ = e.P2P.PublishAggregatedAttestation(ctx, &types.SignedAggregatedAttestation{
 					Data:  candidate.att.Data,
 					Proof: recovered,
@@ -151,6 +135,45 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 			}
 		}
 	}
+}
+
+// selectRecoveryCandidates picks the block attestations worth splitting back into
+// per-attestation proofs. Only votes whose source equals the head's justified
+// checkpoint can be packed into a future block on this head, so any other source is
+// dropped. Attestations that add no participants beyond the locally-held proofs are
+// skipped, and the rest are ranked by new participants and capped to bound proving work.
+func selectRecoveryCandidates(
+	attestations []*types.AggregatedAttestation,
+	headJustified *types.Checkpoint,
+	newEntries, knownEntries map[[32]byte]*store.PayloadEntry,
+) []recoveryCandidate {
+	candidates := make([]recoveryCandidate, 0, len(attestations))
+	for _, att := range attestations {
+		if att == nil || att.Data == nil || att.Data.Source == nil || *att.Data.Source != *headJustified {
+			continue
+		}
+		root, err := att.Data.HashTreeRoot()
+		if err != nil {
+			continue
+		}
+		covered := localCoverage(newEntries[root], knownEntries[root])
+		newCount := 0
+		for _, index := range types.BitlistIndices(att.AggregationBits) {
+			if !covered[index] {
+				newCount++
+			}
+		}
+		if newCount > 0 {
+			candidates = append(candidates, recoveryCandidate{att: att, root: root, newCount: newCount})
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].newCount > candidates[j].newCount
+	})
+	if len(candidates) > maxRecoverySplits {
+		candidates = candidates[:maxRecoverySplits]
+	}
+	return candidates
 }
 
 func coversParticipants(proof *types.SingleMessageAggregate, participants []byte) bool {

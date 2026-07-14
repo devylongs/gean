@@ -11,7 +11,7 @@ NUM_NODES ?= 3
 # Pinned leanSpec revision for spec fixtures. Must be defined before the test-spec/test-all
 # rules that reference it: Make expands a rule's prerequisites when it reads the rule, so a
 # definition placed after those rules would expand to empty in their prerequisites.
-LEAN_SPEC_COMMIT_HASH := 4ca7d27e46b9b978c4f0a9b7e8eb6fd06be8286d
+LEAN_SPEC_COMMIT_HASH := eca701efeb5931010fe63925cd203c9ee55b2dbc
 
 help: ## Show help for each Makefile recipe
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
