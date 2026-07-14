@@ -68,9 +68,17 @@ func (e *Engine) queueMissingBlockFetch(root [32]byte) {
 	if e.P2P == nil {
 		return
 	}
-	logger.Info(logger.Sync, "queueing missing block block_root=0x%x for batched fetch", root)
+	// A missing parent is re-derived on every child that arrives referencing it, so the
+	// same root would otherwise be queued hundreds of times and saturate FetchRootCh with
+	// duplicates — starving the fetch and freezing the head while far behind. Queue each
+	// root at most once until its block is received or its fetch is exhausted.
+	if e.fetchInFlight[root] {
+		return
+	}
 	select {
 	case e.FetchRootCh <- root:
+		e.fetchInFlight[root] = true
+		logger.Info(logger.Sync, "queueing missing block block_root=0x%x for batched fetch", root)
 	default:
 		logger.Warn(logger.Sync, "fetch root channel full, dropping request for 0x%x", root)
 	}
