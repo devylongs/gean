@@ -173,6 +173,21 @@ func (pa *ProtoArray) descendingSlotOrder() []int {
 	return order
 }
 
+func (pa *ProtoArray) ascendingSlotOrder() []int {
+	order := make([]int, len(pa.nodes))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		left, right := pa.nodes[order[i]], pa.nodes[order[j]]
+		if left.Slot != right.Slot {
+			return left.Slot < right.Slot
+		}
+		return order[i] < order[j]
+	})
+	return order
+}
+
 func (pa *ProtoArray) FindHead(justifiedRoot [32]byte) [32]byte {
 	if pa == nil {
 		return justifiedRoot
@@ -197,34 +212,23 @@ func (pa *ProtoArray) Prune(finalizedRoot [32]byte) map[int]int {
 		return nil
 	}
 
+	// Ascending-slot order is a topological order of the parent forest: every parent
+	// edge is strictly slot-increasing (OnBlock and linkOrphanChildren reject a child
+	// whose slot is not above its parent's), so a node's parent is always visited first.
+	// One pass then keeps exactly the finalized subtree — pre-finalized ancestors, sibling
+	// forks, and unlinked orphans fall out. Iterating in this order also leaves kept sorted,
+	// so no separate sort is needed. This replaces a fixed-point iteration that degraded to
+	// O(N^2) when out-of-order arrivals placed a child ahead of its parent in the array.
+	order := pa.ascendingSlotOrder()
 	keep := make([]bool, len(pa.nodes))
-	keep[finalizedIdx] = true
-	for changed := true; changed; {
-		changed = false
-		for i, node := range pa.nodes {
-			if keep[i] || node.Parent < 0 || node.Parent >= len(pa.nodes) {
-				continue
-			}
-			if keep[node.Parent] {
-				keep[i] = true
-				changed = true
-			}
-		}
-	}
-
 	kept := make([]int, 0, len(pa.nodes)-finalizedIdx)
-	for i, keepNode := range keep {
-		if keepNode {
+	for _, i := range order {
+		parent := pa.nodes[i].Parent
+		if i == finalizedIdx || (parent >= 0 && parent < len(pa.nodes) && keep[parent]) {
+			keep[i] = true
 			kept = append(kept, i)
 		}
 	}
-	sort.SliceStable(kept, func(i, j int) bool {
-		left, right := pa.nodes[kept[i]], pa.nodes[kept[j]]
-		if left.Slot != right.Slot {
-			return left.Slot < right.Slot
-		}
-		return kept[i] < kept[j]
-	})
 
 	indexMap := make(map[int]int, len(kept))
 	newNodes := make([]ProtoNode, 0, len(kept))

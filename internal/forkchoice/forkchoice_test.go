@@ -404,6 +404,86 @@ func TestProtoArrayPrune(t *testing.T) {
 	}
 }
 
+// buildLinearChain inserts a linear chain (node k = root(k+1) at slot k, parent
+// root(k), anchored at root(1)). reverse=true inserts children before parents, so
+// orphan linking leaves interior nodes with a parent at a higher array index — the
+// reverse-topological ordering that made the old fixed-point Prune O(N^2).
+func buildLinearChain(depth int, reverse bool) *ForkChoice {
+	fc := New(0, root(1), [32]byte{})
+	insertK := func(k int) {
+		parent := root(1)
+		if k > 1 {
+			parent = root(byte(k))
+		}
+		fc.OnBlock(uint64(k), root(byte(k+1)), parent)
+	}
+	if reverse {
+		for k := depth; k >= 1; k-- {
+			insertK(k)
+		}
+		return fc
+	}
+	for k := 1; k <= depth; k++ {
+		insertK(k)
+	}
+	return fc
+}
+
+func countParentBackEdges(pa *ProtoArray) int {
+	n := 0
+	for i, node := range pa.nodes {
+		if node.Parent > i {
+			n++
+		}
+	}
+	return n
+}
+
+// Prune must depend only on the tree, not on block arrival order: a chain built
+// child-first (heavy parent back-edges) must prune to the exact same layout as the
+// same chain built parent-first.
+func TestPruneIndependentOfArrivalOrder(t *testing.T) {
+	const depth = 10
+	const finalizedAt = 4 // keep nodes 4..10, i.e. root(5)..root(11)
+	finalizedRoot := root(byte(finalizedAt + 1))
+
+	forward := buildLinearChain(depth, false)
+	reverse := buildLinearChain(depth, true)
+
+	// The two orderings must genuinely differ, or the test proves nothing.
+	if got := countParentBackEdges(forward.array); got != 0 {
+		t.Fatalf("forward chain should be topologically ordered, got %d back-edges", got)
+	}
+	if countParentBackEdges(reverse.array) == 0 {
+		t.Fatal("reverse chain should have parent back-edges to exercise the O(N^2) path")
+	}
+
+	forward.Prune(finalizedRoot)
+	reverse.Prune(finalizedRoot)
+
+	fwd, rev := forward.array.Nodes(), reverse.array.Nodes()
+	if len(fwd) != depth-finalizedAt+1 {
+		t.Fatalf("kept %d nodes, want %d", len(fwd), depth-finalizedAt+1)
+	}
+	if len(fwd) != len(rev) {
+		t.Fatalf("forward kept %d nodes, reverse kept %d", len(fwd), len(rev))
+	}
+	for i := range fwd {
+		if fwd[i].Root != rev[i].Root || fwd[i].Parent != rev[i].Parent {
+			t.Fatalf("node %d differs: forward{root=%x parent=%d} reverse{root=%x parent=%d}",
+				i, fwd[i].Root[:1], fwd[i].Parent, rev[i].Root[:1], rev[i].Parent)
+		}
+	}
+
+	// The finalized root anchors the pruned array; pre-finalized nodes are gone.
+	if idx := forward.NodeIndex(finalizedRoot); idx != 0 {
+		t.Fatalf("finalized root index=%d, want 0", idx)
+	}
+	if forward.NodeIndex(root(byte(finalizedAt))) != -1 {
+		t.Fatal("pre-finalized node should be pruned")
+	}
+}
+
 func TestCanonicalAnalysisSeparatesFinalizedForks(t *testing.T) {
 	anchor, a, b, c, forkBefore, forkAfter := root(1), root(2), root(3), root(4), root(5), root(6)
 	fc := New(0, anchor, [32]byte{})
