@@ -33,6 +33,10 @@ func (e *Engine) processOneBlock(signedBlock *types.SignedBlock, queue *[]*types
 	}
 	parentRoot := block.ParentRoot
 
+	// We now hold this block (whether it imports or gets buffered), so any pending by-root
+	// fetch for it is done — drop the in-flight marker so a future gap can re-request it.
+	delete(e.fetchInFlight, blockRoot)
+
 	if e.Store.HasState(blockRoot) {
 		return
 	}

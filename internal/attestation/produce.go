@@ -32,9 +32,13 @@ func ProduceAttestationData(s *store.ConsensusStore, slot uint64) *types.Attesta
 	if types.IsZeroRoot(source.Root) {
 		source.Root = headRoot
 	}
+	// The target walk is bounded by the store's safe target, which can momentarily lag
+	// the head state's justified checkpoint while the node catches up on imports. When it
+	// does, the walk stops below the source; clamp the target up to the source so the vote
+	// stays valid (source <= target, the spec's produce_attestation_data invariant) rather
+	// than dropping the attestation and starving fork choice of the head vote.
 	if source.Slot > target.Slot {
-		logger.Error(logger.Chain, "ProduceAttestation: source slot %d exceeds target slot %d", source.Slot, target.Slot)
-		return nil
+		target = &types.Checkpoint{Root: source.Root, Slot: source.Slot}
 	}
 
 	logger.Info(logger.Chain, "ProduceAttestation: slot=%d head=0x%x source=0x%x/%d target=0x%x/%d",

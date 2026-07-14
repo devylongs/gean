@@ -105,6 +105,10 @@ func (e *Engine) discardFinalizedPending(finalizedSlot uint64) {
 }
 
 func (e *Engine) onFailedRoot(failedRoot [32]byte) {
+	// The fetch for this root is exhausted; drop its in-flight marker so it can be
+	// re-requested if a later child reintroduces the gap.
+	delete(e.fetchInFlight, failedRoot)
+
 	children, ok := e.Pending.RemoveBucket(failedRoot)
 	if !ok {
 		return

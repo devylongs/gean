@@ -57,6 +57,11 @@ type Engine struct {
 	lastTick time.Time
 
 	warnedMissingJustified [32]byte
+
+	// fetchInFlight tracks block roots already queued for by-root fetch so a single
+	// missing parent cannot flood FetchRootCh with duplicate requests. Accessed only
+	// on the dispatch loop (queue on onBlock, clear on receive/exhaustion), so no lock.
+	fetchInFlight map[[32]byte]bool
 }
 
 func New(
@@ -90,6 +95,7 @@ func New(
 		ProposalResultCh:      make(chan *proposalResult, 1),
 		RecoveryCh:            make(chan *types.SignedBlock, 8),
 		ProvingGate:           proving.NewGate(),
+		fetchInFlight:         make(map[[32]byte]bool),
 	}
 	e.configureP2PHooks()
 	return e
