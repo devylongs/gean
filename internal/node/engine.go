@@ -75,17 +75,20 @@ func New(
 ) *Engine {
 	p2p.SetClientGitCommit(gitCommit)
 	e := &Engine{
-		Store:                 s,
-		FC:                    fc,
-		P2P:                   p2pHost,
-		Keys:                  keys,
-		AggCtl:                aggCtl,
-		DutyGate:              dutygate.New(logDutyGateEvent),
-		CommitteeCount:        committeeCount,
-		Shadow:                shadowRates,
-		Pending:               pending.NewBlockBuffer(),
-		PendingAttestations:   pending.NewAttestationBuffer(PendingAttestationsPerRootCap, PendingAttestationsTotalCap),
-		BlockCh:               make(chan *types.SignedBlock, 64),
+		Store:               s,
+		FC:                  fc,
+		P2P:                 p2pHost,
+		Keys:                keys,
+		AggCtl:              aggCtl,
+		DutyGate:            dutygate.New(logDutyGateEvent),
+		CommitteeCount:      committeeCount,
+		Shadow:              shadowRates,
+		Pending:             pending.NewBlockBuffer(),
+		PendingAttestations: pending.NewAttestationBuffer(PendingAttestationsPerRootCap, PendingAttestationsTotalCap),
+		// Sized so gossip keeps flowing while the dispatch loop chews through a
+		// fetched batch: sync delivery blocks when full, but gossip drops, and a
+		// large import burst can take minutes of XMSS verification.
+		BlockCh:               make(chan *types.SignedBlock, 256),
 		AttestationCh:         make(chan *types.SignedAttestation, 256),
 		AggregationCh:         make(chan *types.SignedAggregatedAttestation, 64),
 		FailedRootCh:          make(chan [32]byte, 64),
