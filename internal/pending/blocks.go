@@ -4,6 +4,7 @@ type BlockBuffer struct {
 	children map[[32]byte]map[[32]byte]bool
 	parents  map[[32]byte][32]byte
 	depths   map[[32]byte]int
+	slots    map[[32]byte]uint64
 }
 
 func NewBlockBuffer() *BlockBuffer {
@@ -64,6 +65,31 @@ func (b *BlockBuffer) ClearDepth(root [32]byte) {
 		return
 	}
 	delete(b.depths, root)
+}
+
+func (b *BlockBuffer) SetSlot(root [32]byte, slot uint64) {
+	if !b.ensureMaps() {
+		return
+	}
+	b.slots[root] = slot
+}
+
+// HighestSlotEntry returns the tracked entry farthest from the known chain —
+// the natural eviction victim when the buffer is full, since entries closer
+// to a known state are the ones that can actually connect.
+func (b *BlockBuffer) HighestSlotEntry() ([32]byte, uint64, bool) {
+	if b == nil || len(b.slots) == 0 {
+		return [32]byte{}, 0, false
+	}
+	var maxRoot [32]byte
+	var maxSlot uint64
+	found := false
+	for root, slot := range b.slots {
+		if !found || slot > maxSlot {
+			maxRoot, maxSlot, found = root, slot, true
+		}
+	}
+	return maxRoot, maxSlot, found
 }
 
 func (b *BlockBuffer) ResolveAncestor(start [32]byte) [32]byte {
@@ -136,6 +162,7 @@ func (b *BlockBuffer) ClearEntry(root [32]byte) {
 	}
 	delete(b.parents, root)
 	delete(b.depths, root)
+	delete(b.slots, root)
 }
 
 func (b *BlockBuffer) Pairs() [][2][32]byte {
@@ -174,6 +201,7 @@ func (b *BlockBuffer) discardSubtree(root [32]byte) {
 	}
 	delete(b.parents, root)
 	delete(b.depths, root)
+	delete(b.slots, root)
 	set, ok := b.children[root]
 	if !ok {
 		return
@@ -196,6 +224,9 @@ func (b *BlockBuffer) ensureMaps() bool {
 	}
 	if b.depths == nil {
 		b.depths = make(map[[32]byte]int)
+	}
+	if b.slots == nil {
+		b.slots = make(map[[32]byte]uint64)
 	}
 	return true
 }

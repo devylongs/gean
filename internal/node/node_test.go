@@ -555,3 +555,49 @@ func TestBufferMissingParentKeepsImmediateParentLink(t *testing.T) {
 		t.Fatalf("pending count=%d, want only parentRoot waiting on missingRoot", e.Pending.Count())
 	}
 }
+
+// A full pending buffer must admit blocks near the connect frontier by
+// evicting the farthest-out entry, and keep rejecting blocks that sit no
+// closer than what it already holds.
+func TestBufferMissingParentEvictsFarthestWhenFull(t *testing.T) {
+	e := makeTestEngine()
+	var queue []*types.SignedBlock
+
+	mkRoot := func(slot uint64, tag byte) [32]byte {
+		return [32]byte{byte(slot), byte(slot >> 8), byte(slot >> 16), tag}
+	}
+	buffer := func(slot uint64) [32]byte {
+		blk := &types.SignedBlock{Block: &types.Block{Slot: slot, ParentRoot: mkRoot(slot, 0xBB), Body: &types.BlockBody{}}}
+		root := mkRoot(slot, 0xCC)
+		e.bufferMissingParentBlock(blk, root, blk.Block.ParentRoot, &queue)
+		return root
+	}
+
+	for i := 0; i < MaxPendingBlocks; i++ {
+		buffer(uint64(1000 + i))
+	}
+	if got := e.Pending.Count(); got != MaxPendingBlocks {
+		t.Fatalf("expected buffer filled to %d, got %d", MaxPendingBlocks, got)
+	}
+
+	// Nearer than everything held: admitted, farthest entry evicted.
+	nearRoot := buffer(10)
+	if _, ok := e.Pending.Depth(nearRoot); !ok {
+		t.Fatal("near-frontier block was rejected by a full buffer")
+	}
+	if got := e.Pending.Count(); got != MaxPendingBlocks {
+		t.Fatalf("expected count to stay at cap after eviction, got %d", got)
+	}
+	if _, slot, ok := e.Pending.HighestSlotEntry(); !ok || slot >= uint64(1000+MaxPendingBlocks-1) {
+		t.Fatalf("expected farthest entry evicted, highest tracked slot=%d ok=%v", slot, ok)
+	}
+
+	// Farther than everything held: still rejected.
+	farRoot := buffer(1 << 20)
+	if _, ok := e.Pending.Depth(farRoot); ok {
+		t.Fatal("farther-than-all block should have been rejected")
+	}
+	if got := e.Pending.Count(); got != MaxPendingBlocks {
+		t.Fatalf("expected count unchanged after rejection, got %d", got)
+	}
+}
