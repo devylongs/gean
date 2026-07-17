@@ -45,7 +45,7 @@ func (sd *SyncDriver) checkAndBackfill(ctx context.Context, peerID libp2ppeer.ID
 			return
 		}
 
-		lastSlot, ok := sd.feedBlocks(peerID, blocks, startSlot)
+		lastSlot, ok := sd.feedBlocks(ctx, peerID, blocks, startSlot)
 		if !ok {
 			return
 		}
@@ -84,13 +84,13 @@ func (sd *SyncDriver) fallbackHeadByRoot(ctx context.Context, peerID libp2ppeer.
 		return
 	}
 	for _, block := range rootBlocks {
-		if validFetchedBlock(block) {
-			sd.node.OnBlock(block)
+		if validFetchedBlock(block) && !sd.node.OnSyncBlock(ctx, block) {
+			return
 		}
 	}
 }
 
-func (sd *SyncDriver) feedBlocks(peerID libp2ppeer.ID, blocks []*types.SignedBlock, startSlot uint64) (uint64, bool) {
+func (sd *SyncDriver) feedBlocks(ctx context.Context, peerID libp2ppeer.ID, blocks []*types.SignedBlock, startSlot uint64) (uint64, bool) {
 	if sd == nil || sd.node == nil {
 		return 0, false
 	}
@@ -102,8 +102,14 @@ func (sd *SyncDriver) feedBlocks(peerID libp2ppeer.ID, blocks []*types.SignedBlo
 		return 0, false
 	}
 
+	// Delivery blocks until the engine accepts each block, so advancing the
+	// range cursor past this batch is safe: every slot in it was handed over,
+	// not just attempted. Advancing past dropped blocks is what strands a
+	// lagging node — the gap is never re-requested and nothing connects.
 	for _, block := range blocks {
-		sd.node.OnBlock(block)
+		if !sd.node.OnSyncBlock(ctx, block) {
+			return 0, false
+		}
 	}
 	return lastSlot, true
 }
