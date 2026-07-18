@@ -60,11 +60,23 @@ func (e *Engine) fireBatchFetch(ctx context.Context, roots [][32]byte) {
 			return
 		}
 	}
-	for _, r := range missing {
+	e.notifyFailedRoots(ctx, missing)
+}
+
+// notifyFailedRoots hands exhausted roots to the dispatch loop, blocking until each
+// is accepted. Dropping one is not a lost log line: a root's in-flight marker clears
+// only when its block arrives or this notification is handled, so a dropped root is
+// never re-requested and its gap never closes. Range backfill cannot cover for it —
+// that only runs against a peer whose head is ahead, which is untrue of a node
+// marooned on its own fork. The marker map belongs to the dispatch loop, so the
+// batcher cannot clear it here; backpressure is the only safe option, and the loop
+// never sends on this channel, so blocking cannot deadlock.
+func (e *Engine) notifyFailedRoots(ctx context.Context, roots [][32]byte) {
+	for _, r := range roots {
 		select {
 		case e.FailedRootCh <- r:
-		default:
-			logger.Warn(logger.Sync, "failed root channel full, dropping notification for 0x%x", r)
+		case <-ctx.Done():
+			return
 		}
 	}
 }

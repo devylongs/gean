@@ -1,7 +1,9 @@
 package node
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/geanlabs/gean/internal/p2p"
 	"github.com/geanlabs/gean/internal/types"
@@ -36,6 +38,71 @@ func TestQueueMissingBlockFetchDedupes(t *testing.T) {
 	e.queueMissingBlockFetch(root)
 	if got := len(e.FetchRootCh); got != 1 {
 		t.Fatalf("re-queue after exhaustion: FetchRootCh has %d, want 1", got)
+	}
+}
+
+// A dropped failed-root notification strands its in-flight marker set forever, so the
+// root is never re-requested and the gap never closes. Delivery must wait for the
+// dispatch loop rather than drop.
+func TestNotifyFailedRootsBlocksInsteadOfDropping(t *testing.T) {
+	e := makeTestEngine()
+	for len(e.FailedRootCh) < cap(e.FailedRootCh) {
+		e.FailedRootCh <- [32]byte{}
+	}
+
+	var root [32]byte
+	root[0] = 0xAB
+
+	done := make(chan struct{})
+	go func() {
+		e.notifyFailedRoots(context.Background(), [][32]byte{root})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("notifyFailedRoots returned with a full channel; the notification was dropped")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	<-e.FailedRootCh // dispatch loop makes room
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("notifyFailedRoots did not deliver after the channel drained")
+	}
+
+	// Drain the backlog to reach the root that was waiting.
+	var delivered bool
+	for len(e.FailedRootCh) > 0 {
+		if <-e.FailedRootCh == root {
+			delivered = true
+		}
+	}
+	if !delivered {
+		t.Fatal("failed root was never delivered to the dispatch loop")
+	}
+}
+
+// Shutdown must not wedge the fetch batcher on a dispatch loop that has already stopped.
+func TestNotifyFailedRootsAbortsOnContextCancel(t *testing.T) {
+	e := makeTestEngine()
+	for len(e.FailedRootCh) < cap(e.FailedRootCh) {
+		e.FailedRootCh <- [32]byte{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		e.notifyFailedRoots(ctx, [][32]byte{{0xCD}})
+		close(done)
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("notifyFailedRoots ignored context cancellation")
 	}
 }
 
