@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 env:
-  GO_VERSION: "1.25.11"
+  GO_VERSION: "1.25.12"
   RUST_VERSION: "1.92"
 
 jobs:
