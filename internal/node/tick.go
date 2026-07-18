@@ -70,7 +70,7 @@ func (e *Engine) dispatchAggregationCycle(currentSlot uint64, isAggregator bool)
 	// also applies it to aggregation. Aggregating on a stale view only produces
 	// best-effort aggregates that get dropped, so gating when lagging is safe and
 	// surfaces the not_synced skip reason.
-	if e.DutyGate != nil && !e.DutyGate.Decide("aggregation", currentSlot, e.Store.HeadSlot(), e.Store.MaxStoredBlockSlot()) {
+	if e.DutyGate != nil && !e.DutyGate.Decide("aggregation", currentSlot, e.Store.HeadSlot(), e.networkSeenSlot()) {
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipNotSynced)
 		return
 	}

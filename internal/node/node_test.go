@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/geanlabs/gean/internal/dutygate"
 	"github.com/geanlabs/gean/internal/forkchoice"
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/role"
@@ -553,5 +554,98 @@ func TestBufferMissingParentKeepsImmediateParentLink(t *testing.T) {
 	}
 	if e.Pending.Count() != 1 {
 		t.Fatalf("pending count=%d, want only parentRoot waiting on missingRoot", e.Pending.Count())
+	}
+}
+
+// A full pending buffer must admit blocks near the connect frontier by
+// evicting the farthest-out entry, and keep rejecting blocks that sit no
+// closer than what it already holds.
+func TestBufferMissingParentEvictsFarthestWhenFull(t *testing.T) {
+	e := makeTestEngine()
+	var queue []*types.SignedBlock
+
+	mkRoot := func(slot uint64, tag byte) [32]byte {
+		return [32]byte{byte(slot), byte(slot >> 8), byte(slot >> 16), tag}
+	}
+	buffer := func(slot uint64) [32]byte {
+		blk := &types.SignedBlock{Block: &types.Block{Slot: slot, ParentRoot: mkRoot(slot, 0xBB), Body: &types.BlockBody{}}}
+		root := mkRoot(slot, 0xCC)
+		e.bufferMissingParentBlock(blk, root, blk.Block.ParentRoot, &queue)
+		return root
+	}
+
+	for i := 0; i < MaxPendingBlocks; i++ {
+		buffer(uint64(1000 + i))
+	}
+	if got := e.Pending.Count(); got != MaxPendingBlocks {
+		t.Fatalf("expected buffer filled to %d, got %d", MaxPendingBlocks, got)
+	}
+
+	// Nearer than everything held: admitted, farthest entry evicted.
+	nearRoot := buffer(10)
+	if _, ok := e.Pending.Depth(nearRoot); !ok {
+		t.Fatal("near-frontier block was rejected by a full buffer")
+	}
+	if got := e.Pending.Count(); got != MaxPendingBlocks {
+		t.Fatalf("expected count to stay at cap after eviction, got %d", got)
+	}
+	if _, slot, ok := e.Pending.HighestSlotEntry(); !ok || slot >= uint64(1000+MaxPendingBlocks-1) {
+		t.Fatalf("expected farthest entry evicted, highest tracked slot=%d ok=%v", slot, ok)
+	}
+
+	// Farther than everything held: still rejected.
+	farRoot := buffer(1 << 20)
+	if _, ok := e.Pending.Depth(farRoot); ok {
+		t.Fatal("farther-than-all block should have been rejected")
+	}
+	if got := e.Pending.Count(); got != MaxPendingBlocks {
+		t.Fatalf("expected count unchanged after rejection, got %d", got)
+	}
+}
+
+// networkSeenSlot must reflect gossip the node heard but could not import, so a
+// node whose own chain is stalled doesn't mistake its stall for the network's.
+func TestNetworkSeenSlotPrefersGossipWhenAheadOfStored(t *testing.T) {
+	e := makeTestEngine()
+	// Genesis ~100 slots ago so realistic gossip slots sit inside the horizon.
+	e.Store.SetConfig(&types.ChainConfig{GenesisTime: uint64(time.Now().Unix()) - 400})
+
+	stored := e.Store.MaxStoredBlockSlot()
+	e.noteGossipSlot(&types.SignedBlock{Block: &types.Block{Slot: stored + 50}})
+
+	if got := e.networkSeenSlot(); got != stored+50 {
+		t.Fatalf("networkSeenSlot=%d, want gossip-seen %d", got, stored+50)
+	}
+}
+
+// A far-future gossip slot must not move the network-seen marker; otherwise a
+// hostile peer could pin the duty gate's network-stall carve-out shut.
+func TestNoteGossipSlotIgnoresFarFuture(t *testing.T) {
+	e := makeTestEngine()
+	e.Store.SetConfig(&types.ChainConfig{GenesisTime: uint64(time.Now().Unix()) - 400})
+
+	e.noteGossipSlot(&types.SignedBlock{Block: &types.Block{Slot: 50}})
+	e.noteGossipSlot(&types.SignedBlock{Block: &types.Block{Slot: 1_000_000}})
+
+	if got := e.maxSeenGossipSlot.Load(); got != 50 {
+		t.Fatalf("far-future gossip slot should be ignored, max=%d want 50", got)
+	}
+}
+
+// Regression: a marooned node (own fork advancing with wall clock, live network
+// far ahead on gossip) must stay gated off duties. Feeding the duty gate stored
+// fork slots triggered the network-stall carve-out and kept it proposing on the
+// dead fork; feeding it the gossip-seen slot keeps the gate shut.
+func TestDutyGateClosedForMaroonedNodeViaGossipSeenSlot(t *testing.T) {
+	const wallSlot, forkHead, forkStored, gossipSeen = 64185, 63663, 63663, 64185
+
+	stale := dutygate.New()
+	if !stale.Decide("block", wallSlot, forkHead, forkStored) {
+		t.Fatal("precondition: stored-slot wiring wrongly reopens via network-stall carve-out")
+	}
+
+	fixed := dutygate.New()
+	if fixed.Decide("block", wallSlot, forkHead, gossipSeen) {
+		t.Fatal("marooned node should be gated off its dead fork with gossip-seen slot")
 	}
 }

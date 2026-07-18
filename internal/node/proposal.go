@@ -33,7 +33,7 @@ func (e *Engine) maybePropose(slot, validatorID uint64) {
 	if e.Store.HeadSlot() >= slot {
 		return
 	}
-	if e.DutyGate != nil && !e.DutyGate.Decide("block", slot, e.Store.HeadSlot(), e.Store.MaxStoredBlockSlot()) {
+	if e.DutyGate != nil && !e.DutyGate.Decide("block", slot, e.Store.HeadSlot(), e.networkSeenSlot()) {
 		metrics.IncBlocksSkippedLag()
 		return
 	}

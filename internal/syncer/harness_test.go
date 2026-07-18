@@ -80,6 +80,15 @@ func (n *testNode) OnBlock(block *types.SignedBlock) {
 	n.BlockCh <- block
 }
 
+func (n *testNode) OnSyncBlock(ctx context.Context, block *types.SignedBlock) bool {
+	select {
+	case n.BlockCh <- block:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 func makeTestSyncHarness() (*testNode, *store.ConsensusStore) {
 	store := store.NewConsensusStore(storage.NewInMemoryBackend())
 	header := &types.BlockHeader{Slot: 0}

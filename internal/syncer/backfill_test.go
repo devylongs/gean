@@ -251,3 +251,60 @@ func TestSyncDriver_CheckAndBackfill_PerPeerDedup(t *testing.T) {
 	<-done1
 	_ = drainBlockCh(t, n, 1, 100*time.Millisecond)
 }
+
+// A full engine channel must stall the backfill, not drop blocks: dropped
+// blocks are never re-requested (the range cursor advances past them), which
+// permanently disconnects the chain.
+func TestSyncDriver_CheckAndBackfill_BackpressuresInsteadOfDropping(t *testing.T) {
+	n, store := makeTestSyncHarness()
+	n.BlockCh = make(chan *types.SignedBlock, 1)
+	blocks := makeSyncRange(store.Head(), 1, 2, 3, 4)
+	mock := &mockSyncP2P{
+		rangeBatches: [][]*types.SignedBlock{blocks},
+	}
+	sd := NewSyncDriver(context.Background(), n, store, mock)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sd.checkAndBackfill(context.Background(), libp2ppeer.ID("p1"), &p2p.StatusMessage{HeadSlot: 100})
+	}()
+
+	got := drainBlockCh(t, n, 4, time.Second)
+	if len(got) != 4 {
+		t.Fatalf("expected all 4 blocks delivered despite capacity-1 channel, got %d", len(got))
+	}
+	<-done
+}
+
+// Cancellation while delivery is stalled must abort the backfill cleanly
+// rather than advance to the next range.
+func TestSyncDriver_CheckAndBackfill_CancelAbortsStalledDelivery(t *testing.T) {
+	n, store := makeTestSyncHarness()
+	n.BlockCh = make(chan *types.SignedBlock, 1)
+	blocks := makeSyncRange(store.Head(), 1, 2, 3)
+	mock := &mockSyncP2P{
+		rangeBatches: [][]*types.SignedBlock{blocks, blocks},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	sd := NewSyncDriver(ctx, n, store, mock)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sd.checkAndBackfill(ctx, libp2ppeer.ID("p1"), &p2p.StatusMessage{HeadSlot: 100})
+	}()
+
+	// One block fits the channel; the feed is now stalled on the second.
+	_ = drainBlockCh(t, n, 1, time.Second)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("backfill did not abort after cancellation")
+	}
+	if got := mock.rangeCalls.Load(); got != 1 {
+		t.Errorf("expected no further range fetches after aborted delivery, got %d calls", got)
+	}
+}

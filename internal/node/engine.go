@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/geanlabs/gean/internal/aggregation"
@@ -58,6 +59,11 @@ type Engine struct {
 
 	warnedMissingJustified [32]byte
 
+	// maxSeenGossipSlot is the highest plausible slot heard on gossip, whether
+	// or not the block was admitted. Written from the p2p goroutine, read on
+	// the tick loop by the duty gate.
+	maxSeenGossipSlot atomic.Uint64
+
 	// fetchInFlight tracks block roots already queued for by-root fetch so a single
 	// missing parent cannot flood FetchRootCh with duplicate requests. Accessed only
 	// on the dispatch loop (queue on onBlock, clear on receive/exhaustion), so no lock.
@@ -75,17 +81,20 @@ func New(
 ) *Engine {
 	p2p.SetClientGitCommit(gitCommit)
 	e := &Engine{
-		Store:                 s,
-		FC:                    fc,
-		P2P:                   p2pHost,
-		Keys:                  keys,
-		AggCtl:                aggCtl,
-		DutyGate:              dutygate.New(logDutyGateEvent),
-		CommitteeCount:        committeeCount,
-		Shadow:                shadowRates,
-		Pending:               pending.NewBlockBuffer(),
-		PendingAttestations:   pending.NewAttestationBuffer(PendingAttestationsPerRootCap, PendingAttestationsTotalCap),
-		BlockCh:               make(chan *types.SignedBlock, 64),
+		Store:               s,
+		FC:                  fc,
+		P2P:                 p2pHost,
+		Keys:                keys,
+		AggCtl:              aggCtl,
+		DutyGate:            dutygate.New(logDutyGateEvent),
+		CommitteeCount:      committeeCount,
+		Shadow:              shadowRates,
+		Pending:             pending.NewBlockBuffer(),
+		PendingAttestations: pending.NewAttestationBuffer(PendingAttestationsPerRootCap, PendingAttestationsTotalCap),
+		// Sized so gossip keeps flowing while the dispatch loop chews through a
+		// fetched batch: sync delivery blocks when full, but gossip drops, and a
+		// large import burst can take minutes of XMSS verification.
+		BlockCh:               make(chan *types.SignedBlock, 256),
 		AttestationCh:         make(chan *types.SignedAttestation, 256),
 		AggregationCh:         make(chan *types.SignedAggregatedAttestation, 64),
 		FailedRootCh:          make(chan [32]byte, 64),

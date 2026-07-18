@@ -52,8 +52,13 @@ func (e *Engine) fireBatchFetch(ctx context.Context, roots [][32]byte) {
 	if err != nil {
 		logger.Warn(logger.Sync, "batched fetch failed count=%d err=%v", len(roots), err)
 	}
+	// Fetched parents fill gaps the dispatch loop is waiting on; deliver with
+	// backpressure so none are dropped while their in-flight markers say the
+	// fetch succeeded.
 	for _, b := range blocks {
-		e.OnBlock(b)
+		if !e.OnSyncBlock(ctx, b) {
+			return
+		}
 	}
 	for _, r := range missing {
 		select {
