@@ -16,7 +16,7 @@ func (e *Engine) produceAttestations(slot uint64) {
 		return
 	}
 
-	if e.DutyGate != nil && !e.DutyGate.Decide("attestation", slot, e.Store.HeadSlot(), e.Store.MaxStoredBlockSlot()) {
+	if e.DutyGate != nil && !e.DutyGate.Decide("attestation", slot, e.Store.HeadSlot(), e.networkSeenSlot()) {
 		metrics.IncAttestationsSkippedLag()
 		return
 	}

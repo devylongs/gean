@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/geanlabs/gean/internal/aggregation"
@@ -57,6 +58,11 @@ type Engine struct {
 	lastTick time.Time
 
 	warnedMissingJustified [32]byte
+
+	// maxSeenGossipSlot is the highest plausible slot heard on gossip, whether
+	// or not the block was admitted. Written from the p2p goroutine, read on
+	// the tick loop by the duty gate.
+	maxSeenGossipSlot atomic.Uint64
 
 	// fetchInFlight tracks block roots already queued for by-root fetch so a single
 	// missing parent cannot flood FetchRootCh with duplicate requests. Accessed only

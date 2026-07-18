@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/geanlabs/gean/internal/dutygate"
 	"github.com/geanlabs/gean/internal/forkchoice"
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/role"
@@ -599,5 +600,52 @@ func TestBufferMissingParentEvictsFarthestWhenFull(t *testing.T) {
 	}
 	if got := e.Pending.Count(); got != MaxPendingBlocks {
 		t.Fatalf("expected count unchanged after rejection, got %d", got)
+	}
+}
+
+// networkSeenSlot must reflect gossip the node heard but could not import, so a
+// node whose own chain is stalled doesn't mistake its stall for the network's.
+func TestNetworkSeenSlotPrefersGossipWhenAheadOfStored(t *testing.T) {
+	e := makeTestEngine()
+	// Genesis ~100 slots ago so realistic gossip slots sit inside the horizon.
+	e.Store.SetConfig(&types.ChainConfig{GenesisTime: uint64(time.Now().Unix()) - 400})
+
+	stored := e.Store.MaxStoredBlockSlot()
+	e.noteGossipSlot(&types.SignedBlock{Block: &types.Block{Slot: stored + 50}})
+
+	if got := e.networkSeenSlot(); got != stored+50 {
+		t.Fatalf("networkSeenSlot=%d, want gossip-seen %d", got, stored+50)
+	}
+}
+
+// A far-future gossip slot must not move the network-seen marker; otherwise a
+// hostile peer could pin the duty gate's network-stall carve-out shut.
+func TestNoteGossipSlotIgnoresFarFuture(t *testing.T) {
+	e := makeTestEngine()
+	e.Store.SetConfig(&types.ChainConfig{GenesisTime: uint64(time.Now().Unix()) - 400})
+
+	e.noteGossipSlot(&types.SignedBlock{Block: &types.Block{Slot: 50}})
+	e.noteGossipSlot(&types.SignedBlock{Block: &types.Block{Slot: 1_000_000}})
+
+	if got := e.maxSeenGossipSlot.Load(); got != 50 {
+		t.Fatalf("far-future gossip slot should be ignored, max=%d want 50", got)
+	}
+}
+
+// Regression: a marooned node (own fork advancing with wall clock, live network
+// far ahead on gossip) must stay gated off duties. Feeding the duty gate stored
+// fork slots triggered the network-stall carve-out and kept it proposing on the
+// dead fork; feeding it the gossip-seen slot keeps the gate shut.
+func TestDutyGateClosedForMaroonedNodeViaGossipSeenSlot(t *testing.T) {
+	const wallSlot, forkHead, forkStored, gossipSeen = 64185, 63663, 63663, 64185
+
+	stale := dutygate.New()
+	if !stale.Decide("block", wallSlot, forkHead, forkStored) {
+		t.Fatal("precondition: stored-slot wiring wrongly reopens via network-stall carve-out")
+	}
+
+	fixed := dutygate.New()
+	if fixed.Decide("block", wallSlot, forkHead, gossipSeen) {
+		t.Fatal("marooned node should be gated off its dead fork with gossip-seen slot")
 	}
 }
