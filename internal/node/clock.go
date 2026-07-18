@@ -15,3 +15,10 @@ func (e *Engine) currentInterval(timestampMs uint64) uint64 {
 	}
 	return types.CurrentInterval(e.Store.Config().GenesisTime, timestampMs)
 }
+
+func (e *Engine) millisIntoSlot(timestampMs uint64) uint64 {
+	if e == nil || e.Store == nil {
+		return 0
+	}
+	return types.MillisIntoSlot(e.Store.Config().GenesisTime, timestampMs)
+}
