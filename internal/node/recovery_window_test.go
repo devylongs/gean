@@ -41,3 +41,21 @@ func TestSplitFitsBeforeAggregation(t *testing.T) {
 		})
 	}
 }
+
+// The window check runs before the gate is acquired, and Acquire blocks for as long as
+// the current holder keeps the prover. A stale pass must not authorise a split: the
+// check is re-evaluated on acquisition, so a window that closed while waiting is caught.
+func TestSplitFitsBeforeAggregationRejectsWindowClosedWhileWaiting(t *testing.T) {
+	e := makeTestEngine()
+	genesisMs := e.Store.Config().GenesisTime * 1000
+	base := genesisMs + 10*types.MillisecondsPerSlot
+
+	// Cleared at the start of the slot...
+	if !e.splitFitsBeforeAggregation(base) {
+		t.Fatal("split at slot start should be cleared")
+	}
+	// ...but a wait spanning into the dispatch window must no longer be cleared.
+	if e.splitFitsBeforeAggregation(base + 2*types.MillisecondsPerInterval) {
+		t.Fatal("split must not be cleared once the aggregation window has opened")
+	}
+}

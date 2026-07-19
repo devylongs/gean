@@ -62,6 +62,10 @@ func RunWorker(
 			if gate != nil && !gate.Acquire(acquireCtx, false) {
 				cancelAcquire()
 				metrics.IncProofOperation("aggregation", "canceled")
+				// Losing the prover costs this slot its aggregate, which slows
+				// justification. Log it: without a line here the loss is visible
+				// only in metrics, and an operator reading logs sees a silent gap.
+				logger.Warn(logger.Signature, "aggregation skipped: prover unavailable slot=%d", dispatch.Slot)
 				continue
 			}
 			cancelAcquire()

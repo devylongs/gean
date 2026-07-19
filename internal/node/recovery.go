@@ -131,6 +131,17 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 			metrics.IncProofOperation("recovery", "canceled")
 			return
 		}
+		// Acquire blocks for as long as the current holder keeps the prover, so the
+		// check above describes when recovery asked, not when it was handed over.
+		// Sessions routinely run past their nominal budget, so re-check before
+		// spending the gate and give it back if the window closed while waiting.
+		if !e.splitFitsBeforeAggregation(uint64(time.Now().UnixMilli())) {
+			if e.ProvingGate != nil {
+				e.ProvingGate.Release(false)
+			}
+			metrics.IncProofOperation("recovery", "canceled")
+			return
+		}
 		started := time.Now()
 		proof, err := xmss.SplitType2Proof(signedBlock.Proof.Proof, pubkeys, candidate.root)
 		var recovered *types.SingleMessageAggregate
