@@ -22,11 +22,16 @@ type Dispatch struct {
 	Slot     uint64
 }
 
-// sessionBudget caps one aggregation session's proving time. Dispatch fires
+// SessionBudget caps one aggregation session's proving time. Dispatch fires
 // at interval 2, so two intervals of proving still leaves interval 4 for the
 // results to be promoted and gossiped, and bounds how long the proving gate
-// is held away from proposals.
-const sessionBudget = 2 * types.MillisecondsPerInterval * time.Millisecond
+// is held away from proposals. Exported so other prover users can stay clear
+// of the window this session occupies rather than fork the constant.
+const SessionBudget = 2 * types.MillisecondsPerInterval * time.Millisecond
+
+// AcquirePatience is how long a dispatched session waits for the prover before
+// giving up on the slot's aggregate.
+const AcquirePatience = 750 * time.Millisecond
 
 func RunWorker(
 	ctx context.Context,
@@ -53,10 +58,14 @@ func RunWorker(
 			if dispatch.Snapshot == nil {
 				continue
 			}
-			acquireCtx, cancelAcquire := context.WithTimeout(ctx, 750*time.Millisecond)
+			acquireCtx, cancelAcquire := context.WithTimeout(ctx, AcquirePatience)
 			if gate != nil && !gate.Acquire(acquireCtx, false) {
 				cancelAcquire()
 				metrics.IncProofOperation("aggregation", "canceled")
+				// Losing the prover costs this slot its aggregate, which slows
+				// justification. Log it: without a line here the loss is visible
+				// only in metrics, and an operator reading logs sees a silent gap.
+				logger.Warn(logger.Signature, "aggregation skipped: prover unavailable slot=%d", dispatch.Slot)
 				continue
 			}
 			cancelAcquire()
@@ -68,7 +77,7 @@ func RunWorker(
 			// (and their signature deletes) regrows the next snapshot until
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
-			aggs, payloads, deletes, truncated := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(sessionBudget), shadowRates, estimator)
+			aggs, payloads, deletes, truncated := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), shadowRates, estimator)
 			if gate != nil {
 				gate.Release(false)
 			}

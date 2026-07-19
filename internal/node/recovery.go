@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/geanlabs/gean/internal/aggregation"
 	"github.com/geanlabs/gean/internal/attestationproof"
 	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/store"
@@ -15,6 +16,36 @@ import (
 )
 
 const maxRecoverySplits = 4
+
+const (
+	// recoverySplitBudget is how long one Type-2 split is assumed to hold the prover.
+	// Measured at roughly 700ms, rounded up to a full interval so the estimate errs
+	// toward yielding.
+	recoverySplitBudget = types.MillisecondsPerInterval * time.Millisecond
+	// aggregationDispatchOffset is how far into a slot aggregation is dispatched;
+	// onTick fires it at interval 2.
+	aggregationDispatchOffset = 2 * types.MillisecondsPerInterval * time.Millisecond
+)
+
+// splitFitsBeforeAggregation reports whether a Type-2 split started now would be done
+// with the prover before aggregation next needs it. A split takes about as long as
+// aggregation is willing to wait for the gate, so one running across the dispatch costs
+// the slot its aggregate — and a missed aggregate slows justification, the very thing
+// recovery exists to help. Recovery is best-effort and the aggregate is duty work, so
+// recovery yields the window rather than racing for it.
+func (e *Engine) splitFitsBeforeAggregation(nowMs uint64) bool {
+	intoSlot := time.Duration(e.millisIntoSlot(nowMs)) * time.Millisecond
+	windowEnd := aggregationDispatchOffset + aggregation.SessionBudget
+	if intoSlot >= aggregationDispatchOffset && intoSlot < windowEnd {
+		return false
+	}
+	untilDispatch := aggregationDispatchOffset - intoSlot
+	if intoSlot >= windowEnd {
+		// Past this slot's session; the next dispatch is in the following slot.
+		untilDispatch = types.MillisecondsPerSlot*time.Millisecond - intoSlot + aggregationDispatchOffset
+	}
+	return untilDispatch >= recoverySplitBudget
+}
 
 type recoveryCandidate struct {
 	att      *types.AggregatedAttestation
@@ -92,7 +123,22 @@ func (e *Engine) recoverBlockProofs(ctx context.Context, signedBlock *types.Sign
 		if _, proposesNext := e.getOurProposer(currentSlot + 1); proposesNext {
 			return
 		}
+		if !e.splitFitsBeforeAggregation(now) {
+			metrics.IncProofOperation("recovery", "canceled")
+			return
+		}
 		if e.ProvingGate != nil && !e.ProvingGate.Acquire(ctx, false) {
+			metrics.IncProofOperation("recovery", "canceled")
+			return
+		}
+		// Acquire blocks for as long as the current holder keeps the prover, so the
+		// check above describes when recovery asked, not when it was handed over.
+		// Sessions routinely run past their nominal budget, so re-check before
+		// spending the gate and give it back if the window closed while waiting.
+		if !e.splitFitsBeforeAggregation(uint64(time.Now().UnixMilli())) {
+			if e.ProvingGate != nil {
+				e.ProvingGate.Release(false)
+			}
 			metrics.IncProofOperation("recovery", "canceled")
 			return
 		}
