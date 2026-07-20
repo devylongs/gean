@@ -35,3 +35,7 @@ func IncPeerConnection(direction, result string) {
 func IncPeerDisconnection(direction, reason string) {
 	metricPeerDisconnectionEvents.WithLabelValues(labelOrUnknown(direction), labelOrUnknown(reason)).Inc()
 }
+
+func IncReqRespTimeout(protocol, direction string) {
+	metricReqRespTimeout.WithLabelValues(labelOrUnknown(protocol), labelOrUnknown(direction)).Inc()
+}

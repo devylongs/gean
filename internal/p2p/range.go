@@ -21,6 +21,7 @@ func handleBlocksByRangeRequest(
 	currentSlotFn func() uint64,
 	blocksInRangeFn func(startSlot, count uint64) []*types.SignedBlock,
 ) {
+	armReadDeadline(stream)
 	reqBuf, err := io.ReadAll(io.LimitReader(stream, int64(MaxCompressedPayloadSize)))
 	if err != nil {
 		logger.Warn(logger.Network, "blocks_by_range: read request failed: %v", err)
@@ -101,6 +102,7 @@ func (h *Host) FetchBlocksByRange(
 	if err != nil {
 		return nil, fmt.Errorf("marshal blocks_by_range request: %w", err)
 	}
+	armWriteDeadline(stream)
 	if _, err := stream.Write(EncodeReqRespPayload(reqSSZ)); err != nil {
 		return nil, fmt.Errorf("write blocks_by_range request: %w", err)
 	}
@@ -112,7 +114,7 @@ func (h *Host) FetchBlocksByRange(
 
 	reader := bufio.NewReader(io.LimitReader(stream, int64(MaxCompressedPayloadSize)*int64(count)))
 	for {
-		code, blockData, err := DecodeResponse(reader)
+		code, blockData, err := readReqRespChunk(stream, reader, "blocks_by_range")
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break

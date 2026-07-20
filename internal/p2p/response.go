@@ -1,13 +1,20 @@
 package p2p
 
 import (
-	"io"
+	"github.com/libp2p/go-libp2p/core/network"
 
 	"github.com/geanlabs/gean/internal/logger"
+	"github.com/geanlabs/gean/internal/metrics"
 )
 
-func writeResponse(w io.Writer, label string, code byte, data []byte) bool {
-	if _, err := w.Write(EncodeResponse(code, data)); err != nil {
+// writeResponse arms the idle write deadline before every response frame so a peer
+// that stops reading cannot hold an inbound handler open indefinitely.
+func writeResponse(s network.Stream, label string, code byte, data []byte) bool {
+	armWriteDeadline(s)
+	if _, err := s.Write(EncodeResponse(code, data)); err != nil {
+		if isStreamTimeout(err) {
+			metrics.IncReqRespTimeout(label, "write")
+		}
 		logger.Warn(logger.Network, "%s: write response failed: %v", label, err)
 		return false
 	}
