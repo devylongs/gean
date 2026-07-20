@@ -172,3 +172,24 @@ func minimalTestState() TestState {
 func hexOfLen(n int) string {
 	return "0x" + hex.EncodeToString(make([]byte, n))
 }
+
+// TestValidator must map the fixture's public-key fields, which are serialized as
+// attestationPublicKey / proposalPublicKey. A tag mismatch here leaves both empty,
+// so ToState falls through to the single-key path and rejects every anchor with
+// "pubkey: missing" — silently failing the entire hive spec-test driver at init.
+func TestTestValidatorMapsCanonicalPublicKeyFields(t *testing.T) {
+	const raw = `{"attestationPublicKey":"0xaa","proposalPublicKey":"0xbb","index":7}`
+	var v TestValidator
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if v.AttestationPubkey != "0xaa" {
+		t.Fatalf("attestationPublicKey not mapped: got %q", v.AttestationPubkey)
+	}
+	if v.ProposalPubkey != "0xbb" {
+		t.Fatalf("proposalPublicKey not mapped: got %q", v.ProposalPubkey)
+	}
+	if v.Index != 7 {
+		t.Fatalf("index not mapped: got %d", v.Index)
+	}
+}
