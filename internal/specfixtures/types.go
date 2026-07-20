@@ -117,6 +117,9 @@ type ForkChoiceStep struct {
 	Time        *uint64              `json:"time,omitempty"`
 	Interval    *uint64              `json:"interval,omitempty"`
 	HasProposal *bool                `json:"hasProposal,omitempty"`
+	// TickToSlot, when present and false, delivers a block ahead of the store
+	// clock instead of advancing the clock to the block's slot first.
+	TickToSlot *bool `json:"tickToSlot,omitempty"`
 }
 
 type FCGossipAttestation struct {
