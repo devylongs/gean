@@ -6,21 +6,36 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/types"
 	"github.com/golang/snappy"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
-type failingWriter struct{}
-
-func (failingWriter) Write([]byte) (int, error) {
-	return 0, os.ErrClosed
+// stubStream is a minimal network.Stream for exercising writeResponse: it wires
+// Write and SetWriteDeadline (the only methods writeResponse touches) and leaves the
+// rest to the embedded nil interface, which panics if unexpectedly called.
+type stubStream struct {
+	network.Stream
+	w        io.Writer
+	writeErr error
 }
+
+func (s stubStream) Write(p []byte) (int, error) {
+	if s.writeErr != nil {
+		return 0, s.writeErr
+	}
+	return s.w.Write(p)
+}
+
+func (stubStream) SetWriteDeadline(time.Time) error { return nil }
 
 type captureHandler struct {
 	block *types.SignedBlock
@@ -181,14 +196,14 @@ func TestResponseEncoding(t *testing.T) {
 }
 
 func TestWriteResponseReportsWriteFailure(t *testing.T) {
-	if writeResponse(failingWriter{}, "test", RespSuccess, []byte("payload")) {
+	if writeResponse(stubStream{writeErr: os.ErrClosed}, "test", RespSuccess, []byte("payload")) {
 		t.Fatal("expected writeResponse to report failure")
 	}
 }
 
 func TestWriteResponseWritesEncodedResponse(t *testing.T) {
 	var buf bytes.Buffer
-	if !writeResponse(&buf, "test", RespSuccess, []byte("payload")) {
+	if !writeResponse(stubStream{w: &buf}, "test", RespSuccess, []byte("payload")) {
 		t.Fatal("expected writeResponse success")
 	}
 	code, payload, err := DecodeResponse(&buf)

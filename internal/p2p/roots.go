@@ -17,6 +17,7 @@ import (
 )
 
 func handleBlocksByRootRequest(stream network.Stream, blockByRootFn func(root [32]byte) *types.SignedBlock) {
+	armReadDeadline(stream)
 	reqBuf, err := io.ReadAll(io.LimitReader(stream, int64(MaxCompressedPayloadSize)))
 	if err != nil {
 		logger.Warn(logger.Network, "blocks_by_root: read request failed: %v", err)
@@ -80,6 +81,7 @@ func (h *Host) FetchBlocksByRoot(ctx context.Context, peerID peer.ID, roots [][3
 	}
 	defer stream.Close()
 
+	armWriteDeadline(stream)
 	if _, err := stream.Write(EncodeReqRespPayload(EncodeBlocksByRootRequest(roots))); err != nil {
 		return nil, fmt.Errorf("write blocks request: %w", err)
 	}
@@ -90,7 +92,7 @@ func (h *Host) FetchBlocksByRoot(ctx context.Context, peerID peer.ID, roots [][3
 	seenRoots := make(map[[32]byte]bool, len(roots))
 	reader := bufio.NewReader(io.LimitReader(stream, int64(MaxCompressedPayloadSize)*int64(len(roots))))
 	for {
-		code, blockData, err := DecodeResponse(reader)
+		code, blockData, err := readReqRespChunk(stream, reader, "blocks_by_root")
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
