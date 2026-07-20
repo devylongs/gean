@@ -65,3 +65,9 @@ Gean treats reviewability as a consensus-safety property. Consensus-critical beh
 ## License
 
 Gean is open-source software released under the MIT license.
+
+## Donations
+
+We are a small team of African Ethereum core developers building Gean. Gean is an open-source project and a public good. Funding public goods is hard, and our work is supported through grants, community support, and individual donations.
+
+We work full-time to contribute to the Ethereum ecosystem. If you would like to support our work, you can find our ETH address under **"Sponsor this project"** on this repository.
