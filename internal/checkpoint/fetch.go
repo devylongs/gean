@@ -22,7 +22,7 @@ const (
 // state and block requests. A checkpoint source can be briefly unready when this node
 // boots against it; retrying rides that out instead of exiting. Kept well under the
 // hive client-start window so a genuinely-down source still fails the node fast rather
-// than stranding it. A var so tests can shorten it.
+// than stranding it.
 var checkpointFetchBudget = 40 * time.Second
 
 // checkpointHTTPClient carries no timeout of its own; each attempt is bounded by a
