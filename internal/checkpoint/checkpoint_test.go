@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/geanlabs/gean/internal/types"
 )
@@ -332,12 +334,56 @@ func TestFetchSSZSendsOctetStreamAccept(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := fetchSSZ(srv.URL)
+	got, err := fetchSSZ(srv.URL, time.Now().Add(checkpointFetchBudget))
 	if err != nil {
 		t.Fatalf("fetch ssz: %v", err)
 	}
 	if !bytes.Equal(got, wantBody) {
 		t.Fatalf("body=%v, want %v", got, wantBody)
+	}
+}
+
+// A source that is briefly unready — connection errors or non-200s while it warms
+// up — must be retried rather than exiting the node on the first failure.
+func TestFetchSSZRetriesUntilReady(t *testing.T) {
+	wantBody := []byte{0x0a, 0x0b}
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&attempts, 1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		writeBody(t, w, wantBody)
+	}))
+	defer srv.Close()
+
+	got, err := fetchSSZ(srv.URL, time.Now().Add(checkpointFetchBudget))
+	if err != nil {
+		t.Fatalf("fetch ssz: %v", err)
+	}
+	if !bytes.Equal(got, wantBody) {
+		t.Fatalf("body=%v, want %v", got, wantBody)
+	}
+	if got := atomic.LoadInt32(&attempts); got < 3 {
+		t.Fatalf("expected the unready responses to be retried, saw %d attempts", got)
+	}
+}
+
+// A source that never comes ready must fail within the shared budget, not hang or
+// retry forever.
+func TestFetchSSZGivesUpAfterBudget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	// A short budget keeps the test fast while still exercising at least one retry.
+	if _, err := fetchSSZ(srv.URL, time.Now().Add(1500*time.Millisecond)); err == nil {
+		t.Fatal("expected an error when the source never becomes ready")
+	}
+	if elapsed := time.Since(start); elapsed > checkpointFetchBudget {
+		t.Fatalf("fetch did not respect the budget: ran %s", elapsed)
 	}
 }
 
@@ -487,6 +533,7 @@ func TestVerifyAnchorPairRejectsHeaderMismatch(t *testing.T) {
 }
 
 func TestFetchCheckpointAnchor_StateNotFound(t *testing.T) {
+	defer shortCheckpointBudget(t)()
 	mux := http.NewServeMux()
 	mux.HandleFunc(StatesFinalizedPath, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -507,6 +554,7 @@ func TestFetchCheckpointAnchor_StateNotFound(t *testing.T) {
 }
 
 func TestFetchCheckpointAnchor_BlockNotFound(t *testing.T) {
+	defer shortCheckpointBudget(t)()
 	state, signed := makeAnchorPair(t)
 	if signed == nil {
 		t.Fatal("expected signed block fixture")
@@ -530,4 +578,13 @@ func TestFetchCheckpointAnchor_BlockNotFound(t *testing.T) {
 	if gotState != nil || gotBlock != nil {
 		t.Fatalf("expected nil results, got state=%v block=%v", gotState, gotBlock)
 	}
+}
+
+// shortCheckpointBudget shrinks the anchor fetch budget so negative tests that
+// exercise the retry path (a source that never becomes ready) finish quickly.
+func shortCheckpointBudget(t *testing.T) func() {
+	t.Helper()
+	restore := checkpointFetchBudget
+	checkpointFetchBudget = 1500 * time.Millisecond
+	return func() { checkpointFetchBudget = restore }
 }

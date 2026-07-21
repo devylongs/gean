@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/geanlabs/gean/internal/types"
 )
@@ -16,12 +17,17 @@ func FetchCheckpointAnchor(
 		return nil, nil, err
 	}
 
-	state, err := fetchState(stateURL)
+	// State and block form one anchor pair; share a single fetch budget so a source
+	// that is briefly unready at boot is retried as a whole rather than each request
+	// racing its own deadline.
+	deadline := time.Now().Add(checkpointFetchBudget)
+
+	state, err := fetchState(stateURL, deadline)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch state: %w", err)
 	}
 
-	signedBlock, err := fetchBlock(blockURL)
+	signedBlock, err := fetchBlock(blockURL, deadline)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fetch block: %w", err)
 	}
@@ -36,8 +42,8 @@ func FetchCheckpointAnchor(
 	return state, signedBlock, nil
 }
 
-func fetchState(stateURL string) (*types.State, error) {
-	body, err := fetchSSZ(stateURL)
+func fetchState(stateURL string, deadline time.Time) (*types.State, error) {
+	body, err := fetchSSZ(stateURL, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -49,8 +55,8 @@ func fetchState(stateURL string) (*types.State, error) {
 	return state, nil
 }
 
-func fetchBlock(blockURL string) (*types.SignedBlock, error) {
-	body, err := fetchSSZ(blockURL)
+func fetchBlock(blockURL string, deadline time.Time) (*types.SignedBlock, error) {
+	body, err := fetchSSZ(blockURL, deadline)
 	if err != nil {
 		return nil, err
 	}
