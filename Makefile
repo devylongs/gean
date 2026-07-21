@@ -110,7 +110,13 @@ leanSpec: ## Clone leanSpec at pinned main commit (contains devnet-4 changes)
 	cd leanSpec && git checkout $(LEAN_SPEC_COMMIT_HASH)
 
 leanSpec/fixtures: leanSpec ## Generate consensus test fixtures from leanSpec
-	cd leanSpec && uv run fill --fork lstar --scheme=prod -o fixtures
+	cd leanSpec && \
+		KEYS_URL=$$(uv run python -c "from consensus_testing.keys import KEY_DOWNLOAD_URLS; print(KEY_DOWNLOAD_URLS['prod'])") && \
+		KEYS_DIR=packages/testing/src/consensus_testing/test_keys && \
+		mkdir -p $$KEYS_DIR && \
+		curl -sSL "$$KEYS_URL" -o /tmp/prod_scheme.tar.gz && \
+		tar -xzf /tmp/prod_scheme.tar.gz -C $$KEYS_DIR && \
+		uv run fill --fork Lstar --scheme prod -o fixtures
 
 # --- Docker ---
 
