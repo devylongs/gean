@@ -51,6 +51,15 @@ func loadStartupInputs(cfg config) (*startupInputs, error) {
 }
 
 func bootstrapStore(s *store.ConsensusStore, genesisConfig *genesis.GenesisConfig, checkpointURL string) error {
+	// Surface the checkpoint-sync configuration up front: a node expected to
+	// checkpoint-sync that silently starts from genesis (no url reached the
+	// binary) otherwise looks identical to a normal genesis start in the logs.
+	if checkpointURL != "" {
+		logger.Info(logger.Node, "checkpoint sync configured: url=%s", checkpointURL)
+	} else {
+		logger.Info(logger.Node, "checkpoint sync not configured (no --checkpoint-sync-url)")
+	}
+
 	existingHead := s.Head()
 	existingHeader := s.GetBlockHeader(existingHead)
 	existingState := s.GetState(existingHead)
