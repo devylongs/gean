@@ -1,6 +1,7 @@
 package specfixtures
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"strings"
@@ -191,5 +192,45 @@ func TestTestValidatorMapsCanonicalPublicKeyFields(t *testing.T) {
 	}
 	if v.Index != 7 {
 		t.Fatalf("index not mapped: got %d", v.Index)
+	}
+}
+
+func TestFixtureSignedBlockMapsNestedProof(t *testing.T) {
+	const raw = `{
+		"block": {"slot": 1, "proposerIndex": 1, "parentRoot": "0x01", "stateRoot": "0x02", "body": {"attestations": {"data": []}}},
+		"proof": {"proof": {"data": "0x0102"}}
+	}`
+	var sb FixtureSignedBlock
+	if err := json.Unmarshal([]byte(raw), &sb); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	signed, err := sb.ToSignedBlock()
+	if err != nil {
+		t.Fatalf("ToSignedBlock: %v", err)
+	}
+	if want := []byte{0x01, 0x02}; !bytes.Equal(signed.Proof.Proof, want) {
+		t.Fatalf("proof = %x, want %x — nested proof.proof.data not mapped", signed.Proof.Proof, want)
+	}
+}
+
+func TestStateTransitionFixtureRejectionMarkerSpellings(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"rejectionReason", `{"rejectionReason":"EMPTY_VALIDATOR_REGISTRY"}`, "EMPTY_VALIDATOR_REGISTRY"},
+		{"expectException", `{"expectException":"SOME_ERROR"}`, "SOME_ERROR"},
+		{"expectExceptionWins", `{"expectException":"A","rejectionReason":"B"}`, "A"},
+		{"absent", `{}`, ""},
+	}
+	for _, tc := range cases {
+		var f StateTransitionFixture
+		if err := json.Unmarshal([]byte(tc.raw), &f); err != nil {
+			t.Fatalf("%s: unmarshal: %v", tc.name, err)
+		}
+		if got := f.ExpectedException(); got != tc.want {
+			t.Fatalf("%s: ExpectedException() = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
