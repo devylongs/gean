@@ -175,6 +175,10 @@ type VerifySignaturesFixture struct {
 }
 
 type FixtureSignedBlock struct {
-	Block TestBlock   `json:"block"`
+	Block TestBlock         `json:"block"`
+	Proof FixtureBlockProof `json:"proof"`
+}
+
+type FixtureBlockProof struct {
 	Proof FCProofData `json:"proof"`
 }

@@ -15,7 +15,7 @@ func (sb *FixtureSignedBlock) ToSignedBlock() (*types.SignedBlock, error) {
 		return nil, fmt.Errorf("signedBlock.block: %w", err)
 	}
 
-	proof, err := ParseHexBytes(sb.Proof.Data)
+	proof, err := ParseHexBytes(sb.Proof.Proof.Data)
 	if err != nil {
 		return nil, fmt.Errorf("signedBlock.proof.proof: %w", err)
 	}
