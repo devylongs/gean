@@ -51,11 +51,23 @@ func loadStartupInputs(cfg config) (*startupInputs, error) {
 }
 
 func bootstrapStore(s *store.ConsensusStore, genesisConfig *genesis.GenesisConfig, checkpointURL string) error {
+	// Surface the checkpoint-sync configuration up front: a node expected to
+	// checkpoint-sync that silently starts from genesis (no url reached the
+	// binary) otherwise looks identical to a normal genesis start in the logs.
+	if checkpointURL != "" {
+		logger.Info(logger.Node, "checkpoint sync configured: url=%s", checkpointURL)
+	} else {
+		logger.Info(logger.Node, "checkpoint sync not configured (no --checkpoint-sync-url)")
+	}
+
 	existingHead := s.Head()
 	existingHeader := s.GetBlockHeader(existingHead)
 	existingState := s.GetState(existingHead)
 
 	if existingHeader != nil && existingState != nil && existingHeader.Slot > 0 {
+		if s.GetSignedBlock(existingHead) == nil {
+			return fmt.Errorf("incompatible pre-devnet-5 data directory: signed head block missing; reset the data directory")
+		}
 		logger.Info(logger.Node, "restoring from database: slot=%d head=%x justified=%d finalized=%d",
 			existingHeader.Slot, existingHead,
 			s.LatestJustified().Slot, s.LatestFinalized().Slot)
@@ -112,9 +124,7 @@ func bootstrapFromGenesis(s *store.ConsensusStore, genesisConfig *genesis.Genesi
 			StateRoot:     genesisState.LatestBlockHeader.StateRoot,
 			Body:          &types.BlockBody{},
 		},
-		Signature: &types.BlockSignatures{
-			ProposerSignature: types.BlankXMSSSignature(),
-		},
+		Proof: &types.MultiMessageAggregate{},
 	}
 	if err := s.StorePendingBlock(canonicalRoot, genesisSignedBlock); err != nil {
 		return fmt.Errorf("store genesis block: %w", err)

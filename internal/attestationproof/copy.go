@@ -22,13 +22,13 @@ func copyCheckpoint(cp *types.Checkpoint) *types.Checkpoint {
 	return &out
 }
 
-func copyProof(proof *types.AggregatedSignatureProof) *types.AggregatedSignatureProof {
+func copyProof(proof *types.SingleMessageAggregate) *types.SingleMessageAggregate {
 	if proof == nil {
 		return nil
 	}
-	return &types.AggregatedSignatureProof{
+	return &types.SingleMessageAggregate{
 		Participants: copyBytes(proof.Participants),
-		ProofData:    copyBytes(proof.ProofData),
+		Proof:        copyBytes(proof.Proof),
 	}
 }
 

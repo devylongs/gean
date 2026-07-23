@@ -13,14 +13,21 @@ func GetAttestationTarget(s *store.ConsensusStore) *types.Checkpoint {
 		return &types.Checkpoint{}
 	}
 
-	safeTargetHeader := s.GetBlockHeader(s.SafeTarget())
 	safeTargetSlot := uint64(0)
-	if safeTargetHeader != nil {
+	if safeTargetHeader := s.GetBlockHeader(s.SafeTarget()); safeTargetHeader != nil {
 		safeTargetSlot = safeTargetHeader.Slot
 	}
 
+	// The walk never crosses the finalized boundary: a safe target lagging
+	// behind finalization falls back to the finalized slot as the lower bound.
+	finalizedSlot := s.LatestFinalized().Slot
+	lowerBoundSlot := safeTargetSlot
+	if finalizedSlot > lowerBoundSlot {
+		lowerBoundSlot = finalizedSlot
+	}
+
 	for range uint64(types.JustificationLookbackSlots) {
-		if targetHeader.Slot <= safeTargetSlot {
+		if targetHeader.Slot <= lowerBoundSlot {
 			break
 		}
 		targetRoot = targetHeader.ParentRoot
@@ -31,7 +38,6 @@ func GetAttestationTarget(s *store.ConsensusStore) *types.Checkpoint {
 		targetHeader = parent
 	}
 
-	finalizedSlot := s.LatestFinalized().Slot
 	for targetHeader.Slot > finalizedSlot &&
 		!statetransition.SlotIsJustifiableAfter(targetHeader.Slot, finalizedSlot) {
 		targetRoot = targetHeader.ParentRoot
@@ -40,11 +46,6 @@ func GetAttestationTarget(s *store.ConsensusStore) *types.Checkpoint {
 			break
 		}
 		targetHeader = parent
-	}
-
-	latestJustified := s.LatestJustified()
-	if targetHeader.Slot < latestJustified.Slot {
-		return latestJustified
 	}
 
 	return &types.Checkpoint{

@@ -169,12 +169,29 @@ func TestLoadGenesisConfigAcceptsLeanchainFields(t *testing.T) {
 	}
 }
 
-func TestLoadGenesisConfigRejectsWrongCommitteeCount(t *testing.T) {
+// Committee count is a shared network parameter; a multi-subnet devnet
+// config.yaml must load rather than be rejected for differing from the default.
+func TestLoadGenesisConfigAcceptsMultiSubnetCommitteeCount(t *testing.T) {
+	for _, count := range []uint64{2, 8} {
+		tmpFile := t.TempDir() + "/config.yaml"
+		writeGenesisConfig(t, tmpFile, fmt.Sprintf("ATTESTATION_COMMITTEE_COUNT: %d\n", count)+testConfigYAML)
+
+		config, err := LoadGenesisConfig(tmpFile)
+		if err != nil {
+			t.Fatalf("committee count %d: unexpected error: %v", count, err)
+		}
+		if config.AttestationCommitteeCount == nil || *config.AttestationCommitteeCount != count {
+			t.Fatalf("committee count %d not parsed: %v", count, config.AttestationCommitteeCount)
+		}
+	}
+}
+
+func TestLoadGenesisConfigRejectsZeroCommitteeCount(t *testing.T) {
 	tmpFile := t.TempDir() + "/config.yaml"
-	writeGenesisConfig(t, tmpFile, "ATTESTATION_COMMITTEE_COUNT: 2\n"+testConfigYAML)
+	writeGenesisConfig(t, tmpFile, "ATTESTATION_COMMITTEE_COUNT: 0\n"+testConfigYAML)
 
 	if _, err := LoadGenesisConfig(tmpFile); err == nil {
-		t.Fatal("expected error when ATTESTATION_COMMITTEE_COUNT disagrees with gean's const")
+		t.Fatal("expected error when ATTESTATION_COMMITTEE_COUNT is 0")
 	}
 }
 

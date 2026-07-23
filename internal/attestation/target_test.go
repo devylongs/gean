@@ -39,3 +39,26 @@ func TestGetAttestationTargetWalksBackToSafeTarget(t *testing.T) {
 		t.Fatalf("target = %+v, want slot 8 root %x", cp, h8)
 	}
 }
+
+// When the safe target lags behind finalization, the lower bound is the
+// finalized slot: the walk must stop at finalized, not rewind to the stale
+// safe target. Chain head(6)->5->4, safe target slot 4, finalized slot 5.
+func TestGetAttestationTargetLowerBoundIsFinalizedWhenSafeTargetStale(t *testing.T) {
+	s := makeValidationStore()
+	h6 := [32]byte{6}
+	h5 := [32]byte{5}
+	h4 := [32]byte{4}
+	s.InsertBlockHeader(h6, &types.BlockHeader{Slot: 6, ParentRoot: h5})
+	s.InsertBlockHeader(h5, &types.BlockHeader{Slot: 5, ParentRoot: h4})
+	s.InsertBlockHeader(h4, &types.BlockHeader{Slot: 4})
+
+	s.SetHead(h6)
+	s.SetSafeTarget(h4)
+	s.SetLatestFinalized(&types.Checkpoint{Slot: 5, Root: h5})
+	s.SetLatestJustified(&types.Checkpoint{Slot: 0})
+
+	cp := attestation.GetAttestationTarget(s)
+	if cp.Slot != 5 || cp.Root != h5 {
+		t.Fatalf("target = %+v, want slot 5 root %x (finalized lower bound)", cp, h5)
+	}
+}

@@ -33,6 +33,7 @@ func (e *Engine) GetSyncStatus() syncer.SyncStatus {
 }
 
 func (e *Engine) logChainStatus(currentSlot uint64) {
+	metrics.SampleProcessRSS()
 	headRoot := e.Store.Head()
 	headHeader := e.Store.GetBlockHeader(headRoot)
 	justified := e.Store.LatestJustified()

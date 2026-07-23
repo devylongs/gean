@@ -66,8 +66,52 @@ func (e *SlotGapTooLargeError) Error() string {
 	return fmt.Sprintf("slot gap %d at slot %d exceeds max %d", e.Gap, e.Current, e.Max)
 }
 
+type AttesterIndexOutOfRangeError struct {
+	Index      uint64
+	Validators uint64
+}
+
+func (e *AttesterIndexOutOfRangeError) Error() string {
+	return fmt.Sprintf("attestation aggregation bit %d outside validator registry of %d", e.Index, e.Validators)
+}
+
+// TooManyAttestationDataError rejects a block whose distinct AttestationData count
+// exceeds the per-block cap. The bound is a property of the transition itself so it
+// holds for raw state transitions and block-production trial blocks alike, not only
+// the import caller. Split aggregates that share one data entry count once.
+type TooManyAttestationDataError struct {
+	Count uint64
+	Max   uint64
+}
+
+func (e *TooManyAttestationDataError) Error() string {
+	return fmt.Sprintf("block contains %d distinct AttestationData entries; maximum is %d", e.Count, e.Max)
+}
+
+// JustifiedSlotOutOfRangeError rejects a block whose attestation queries the
+// justification status of an active slot that lies beyond the tracked bitfield.
+// Slots at or below the finalized boundary are justified by definition and never
+// reach this path; only an in-future-but-untracked slot is a domain rejection
+// rather than a silently dropped vote.
+type JustifiedSlotOutOfRangeError struct {
+	Slot              uint64
+	FinalizedBoundary uint64
+	TrackedLength     uint64
+}
+
+func (e *JustifiedSlotOutOfRangeError) Error() string {
+	return fmt.Sprintf("Slot %d is outside the tracked range (finalized_boundary=%d, tracked_length=%d)",
+		e.Slot, e.FinalizedBoundary, e.TrackedLength)
+}
+
+var ErrEmptyAggregationBits = fmt.Errorf("attestation aggregation bits have no set bits")
+
 var ErrNoValidators = fmt.Errorf("state has no validators")
 var ErrZeroHashInJustificationRoots = fmt.Errorf("zero hash found in justifications_roots")
+
+var ErrEmptyValidatorRegistry = fmt.Errorf("state holds no validators to segment justification votes against")
+
+var ErrJustificationVotesLengthMismatch = fmt.Errorf("justifications_validators length does not equal justifications_roots count times validator count")
 var ErrMalformedState = fmt.Errorf("malformed state")
 var ErrMalformedBlock = fmt.Errorf("malformed block")
 

@@ -69,8 +69,8 @@ type TestDataList struct {
 }
 
 type TestValidator struct {
-	AttestationPubkey string `json:"attestationPubkey"`
-	ProposalPubkey    string `json:"proposalPubkey"`
+	AttestationPubkey string `json:"attestationPublicKey"`
+	ProposalPubkey    string `json:"proposalPublicKey"`
 	Index             uint64 `json:"index"`
 }
 

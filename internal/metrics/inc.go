@@ -24,6 +24,9 @@ func IncFinalization(result string) {
 }
 func IncBlockBuildingSuccess()  { metricBlockBuildingSuccess.Inc() }
 func IncBlockBuildingFailures() { metricBlockBuildingFailures.Inc() }
+func IncProofOperation(operation, result string) {
+	metricProofOperations.WithLabelValues(labelOrUnknown(operation), labelOrUnknown(result)).Inc()
+}
 
 func IncPeerConnection(direction, result string) {
 	metricPeerConnectionEvents.WithLabelValues(labelOrUnknown(direction), labelOrUnknown(result)).Inc()
@@ -31,4 +34,8 @@ func IncPeerConnection(direction, result string) {
 
 func IncPeerDisconnection(direction, reason string) {
 	metricPeerDisconnectionEvents.WithLabelValues(labelOrUnknown(direction), labelOrUnknown(reason)).Inc()
+}
+
+func IncReqRespTimeout(protocol, direction string) {
+	metricReqRespTimeout.WithLabelValues(labelOrUnknown(protocol), labelOrUnknown(direction)).Inc()
 }

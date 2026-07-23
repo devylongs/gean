@@ -11,8 +11,12 @@ on:
       - "Makefile"
 
 env:
-  GO_VERSION: "1.25.9"
-  RUST_VERSION: "1.88"
+  GO_VERSION: "1.25.12"
+  # Fixture generation compiles the spec's prover toolchain (lean-multisig-py ->
+  # leanMultisig -> Plonky3), which uses nightly-only features (e.g.
+  # maybe_uninit_slice). This job builds no gean FFI — that stays pinned to
+  # 1.92 via xmss/rust/rust-toolchain.toml — so nightly here is isolated.
+  RUST_VERSION: "nightly"
 
 jobs:
   spec-tests:

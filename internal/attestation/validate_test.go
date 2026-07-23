@@ -27,8 +27,11 @@ func makeValidAttestationData() *types.AttestationData {
 
 func insertValidationHeaders(s *store.ConsensusStore) {
 	s.InsertBlockHeader([32]byte{1}, &types.BlockHeader{Slot: 3})
-	s.InsertBlockHeader([32]byte{2}, &types.BlockHeader{Slot: 4})
-	s.InsertBlockHeader([32]byte{3}, &types.BlockHeader{Slot: 5})
+	s.InsertBlockHeader([32]byte{2}, &types.BlockHeader{Slot: 4, ParentRoot: [32]byte{1}})
+	s.InsertBlockHeader([32]byte{3}, &types.BlockHeader{Slot: 5, ParentRoot: [32]byte{2}})
+	// Anchor finalization at the chain base so a valid head descends from it; the
+	// finalized-descendant admission check needs a reachable finalized block.
+	s.SetLatestFinalized(&types.Checkpoint{Root: [32]byte{1}, Slot: 3})
 }
 
 func TestValidateAttestationDataAvailability(t *testing.T) {
@@ -118,6 +121,38 @@ func TestValidateAttestationDataSlotMismatches(t *testing.T) {
 	}
 }
 
+func TestValidateAttestationDataHeadOffFinalized(t *testing.T) {
+	s := makeValidationStore()
+	s.SetTime(30)
+	insertValidationHeaders(s)
+	// Finalize a slot-4 fork block off the chain base. The head {3} descends from
+	// {1}, not from this finalized block, so admission must reject it.
+	s.InsertBlockHeader([32]byte{9}, &types.BlockHeader{Slot: 4, ParentRoot: [32]byte{1}})
+	s.SetLatestFinalized(&types.Checkpoint{Root: [32]byte{9}, Slot: 4})
+
+	err := attestation.ValidateAttestationData(s, makeValidAttestationData())
+	se, ok := err.(*store.StoreError)
+	if !ok || se.Kind != store.ErrHeadNotDescendantOfFinalized {
+		t.Fatalf("error=%v, want ErrHeadNotDescendantOfFinalized", err)
+	}
+}
+
+func TestValidateAttestationDataSlotBeforeHead(t *testing.T) {
+	s := makeValidationStore()
+	s.SetTime(30)
+	insertValidationHeaders(s)
+
+	data := makeValidAttestationData()
+	// Vote slot precedes the head it claims to have seen (head slot 5).
+	data.Slot = 4
+
+	err := attestation.ValidateAttestationData(s, data)
+	se, ok := err.(*store.StoreError)
+	if !ok || se.Kind != store.ErrAttestationSlotBeforeHead {
+		t.Fatalf("error=%v, want ErrAttestationSlotBeforeHead", err)
+	}
+}
+
 func TestValidateAttestationDataFutureSlot(t *testing.T) {
 	s := makeValidationStore()
 	s.SetTime(0)
@@ -130,5 +165,49 @@ func TestValidateAttestationDataFutureSlot(t *testing.T) {
 	se, ok := err.(*store.StoreError)
 	if !ok || se.Kind != store.ErrAttestationTooFarInFuture {
 		t.Fatalf("error=%v, want ErrAttestationTooFarInFuture", err)
+	}
+}
+
+func TestValidateAttestationDataAncestry(t *testing.T) {
+	// Chain root1(3) <- root2(4) <- root3(5), plus a fork root4(4) off root1.
+	newStore := func() *store.ConsensusStore {
+		s := makeValidationStore()
+		s.SetTime(30)
+		insertValidationHeaders(s)
+		s.InsertBlockHeader([32]byte{4}, &types.BlockHeader{Slot: 4, ParentRoot: [32]byte{1}})
+		return s
+	}
+	cp := func(root byte, slot uint64) *types.Checkpoint {
+		return &types.Checkpoint{Root: [32]byte{root}, Slot: slot}
+	}
+
+	tests := []struct {
+		name           string
+		source, target *types.Checkpoint
+		head           *types.Checkpoint
+		want           store.StoreErrorKind
+	}{
+		{
+			name:   "source_not_ancestor_of_target",
+			source: cp(4, 4), target: cp(3, 5), head: cp(3, 5),
+			want: store.ErrSourceNotAncestorOfTarget,
+		},
+		{
+			name:   "target_not_ancestor_of_head",
+			source: cp(1, 3), target: cp(4, 4), head: cp(3, 5),
+			want: store.ErrTargetNotAncestorOfHead,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore()
+			data := &types.AttestationData{Slot: 5, Source: tc.source, Target: tc.target, Head: tc.head}
+			err := attestation.ValidateAttestationData(s, data)
+			se, ok := err.(*store.StoreError)
+			if !ok || se.Kind != tc.want {
+				t.Fatalf("error=%v, want kind %d", err, tc.want)
+			}
+		})
 	}
 }

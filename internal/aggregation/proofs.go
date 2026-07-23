@@ -6,18 +6,26 @@ import (
 	"github.com/geanlabs/gean/xmss"
 )
 
+// selectChildProofs folds coverage-adding child proofs into the aggregation
+// inputs. remaining caps how many more units this pass may take; child proofs
+// are preferred over raw signatures because each carries many validators, so
+// they buy the most coverage per unit of prover budget.
 func selectChildProofs(
 	entry *store.PayloadEntry,
 	state *types.State,
 	children *[]xmss.ChildProof,
 	covered map[uint64]bool,
 	cache *xmss.PubKeyCache,
+	remaining *int,
 ) {
 	if entry == nil || state == nil || cache == nil || len(entry.Proofs) == 0 {
 		return
 	}
 
 	for _, proof := range entry.Proofs {
+		if *remaining <= 0 {
+			return
+		}
 		bitsLen := types.BitlistLen(proof.Participants)
 		if countNewCoverage(proof.Participants, covered) == 0 {
 			continue
@@ -51,9 +59,10 @@ func selectChildProofs(
 			covered[vid] = true
 		}
 		*children = append(*children, xmss.ChildProof{
-			Pubkeys:   pubkeys,
-			ProofData: proof.ProofData,
+			Pubkeys: pubkeys,
+			Proof:   proof.Proof,
 		})
+		*remaining--
 	}
 }
 

@@ -18,10 +18,10 @@ func testData() *types.AttestationData {
 	}
 }
 
-func testProof(ids ...uint64) *types.AggregatedSignatureProof {
-	return &types.AggregatedSignatureProof{
+func testProof(ids ...uint64) *types.SingleMessageAggregate {
+	return &types.SingleMessageAggregate{
 		Participants: types.BitlistFromIndices(ids),
-		ProofData:    []byte{0x01},
+		Proof:        []byte{0x01},
 	}
 }
 
@@ -30,7 +30,7 @@ func TestMergeRejectsNilCache(t *testing.T) {
 	state := &types.State{Validators: []*types.Validator{{}, {}}}
 
 	proof, err := merger.Merge(
-		[]*types.AggregatedSignatureProof{testProof(0), testProof(1)},
+		[]*types.SingleMessageAggregate{testProof(0), testProof(1)},
 		testData(),
 		state,
 	)
@@ -48,7 +48,7 @@ func TestMergeRejectsOutOfRangeParticipant(t *testing.T) {
 	state := &types.State{Validators: []*types.Validator{{}}}
 
 	proof, err := merger.Merge(
-		[]*types.AggregatedSignatureProof{testProof(0), testProof(1)},
+		[]*types.SingleMessageAggregate{testProof(0), testProof(1)},
 		testData(),
 		state,
 	)
@@ -66,7 +66,7 @@ func TestMergeRejectsMalformedProof(t *testing.T) {
 	state := &types.State{Validators: []*types.Validator{{}, {}}}
 
 	proof, err := merger.Merge(
-		[]*types.AggregatedSignatureProof{testProof(0), {Participants: types.BitlistFromIndices([]uint64{1})}},
+		[]*types.SingleMessageAggregate{testProof(0), {Participants: types.BitlistFromIndices([]uint64{1})}},
 		testData(),
 		state,
 	)
@@ -84,7 +84,7 @@ func TestMergeRejectsOverlappingParticipants(t *testing.T) {
 	state := &types.State{Validators: []*types.Validator{{}, {}, {}}}
 
 	proof, err := merger.Merge(
-		[]*types.AggregatedSignatureProof{testProof(0, 1), testProof(1, 2)},
+		[]*types.SingleMessageAggregate{testProof(0, 1), testProof(1, 2)},
 		testData(),
 		state,
 	)
@@ -102,7 +102,7 @@ func TestMergeRejectsSlotOverflow(t *testing.T) {
 	data.Slot = uint64(^uint32(0)) + 1
 
 	proof, err := merger.Merge(
-		[]*types.AggregatedSignatureProof{testProof(0), testProof(1)},
+		[]*types.SingleMessageAggregate{testProof(0), testProof(1)},
 		data,
 		&types.State{},
 	)

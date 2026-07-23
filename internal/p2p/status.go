@@ -43,6 +43,7 @@ func (s *StatusMessage) UnmarshalSSZ(buf []byte) error {
 }
 
 func handleStatusRequest(stream network.Stream, statusFn func() *StatusMessage) {
+	armReadDeadline(stream)
 	reqBuf, err := io.ReadAll(io.LimitReader(stream, int64(MaxCompressedPayloadSize)))
 	if err != nil {
 		logger.Warn(logger.Network, "status: read request failed: %v", err)
@@ -91,12 +92,13 @@ func (h *Host) SendStatusRequest(ctx context.Context, peerID peer.ID, ourStatus 
 	}
 	defer stream.Close()
 
+	armWriteDeadline(stream)
 	if _, err := stream.Write(EncodeReqRespPayload(ourStatus.MarshalSSZ())); err != nil {
 		return nil, fmt.Errorf("write status request: %w", err)
 	}
 	stream.CloseWrite()
 
-	code, respData, err := DecodeResponse(stream)
+	code, respData, err := readReqRespChunk(stream, stream, "status")
 	if err != nil {
 		return nil, fmt.Errorf("read status response: %w", err)
 	}

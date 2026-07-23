@@ -121,4 +121,18 @@ var (
 		Help:    "Elapsed time between clock ticks in seconds",
 		Buckets: []float64{0.4, 0.6, 0.75, 0.8, 0.805, 0.81, 0.815, 0.82, 0.825, 0.85, 0.9, 1.0, 1.2, 1.6},
 	})
+	metricProvingDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "lean_proving_duration_seconds",
+		Help:    "Recursive proof operation duration",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 4, 8},
+	}, []string{"operation"})
+	metricProofSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "lean_proof_size_bytes",
+		Help:    "Serialized aggregate proof size",
+		Buckets: []float64{1024, 4096, 16384, 65536, 131072, 262144, 524288},
+	}, []string{"type"})
+	metricProofMergeComponents = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "lean_proof_merge_components", Help: "Type-1 components merged into a Type-2 proof",
+		Buckets: []float64{1, 2, 3, 4, 5, 6, 7, 8, 9},
+	})
 )

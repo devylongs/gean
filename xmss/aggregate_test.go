@@ -171,7 +171,7 @@ func TestAggregateRejectsChildProofWithWrongMessage(t *testing.T) {
 	_, err = AggregateWithChildren(
 		[]CPubKey{cRawPk},
 		[]CSig{cRawSig},
-		[]ChildProof{{Pubkeys: []CPubKey{cChildPk}, ProofData: childProof}},
+		[]ChildProof{{Pubkeys: []CPubKey{cChildPk}, Proof: childProof}},
 		msgB,
 		0,
 	)

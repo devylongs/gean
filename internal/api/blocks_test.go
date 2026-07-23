@@ -24,7 +24,7 @@ func makeSignedBlockForTest(slot, proposer uint64) *types.SignedBlock {
 			ProposerIndex: proposer,
 			Body:          &types.BlockBody{},
 		},
-		Signature: &types.BlockSignatures{},
+		Proof: &types.MultiMessageAggregate{},
 	}
 }
 

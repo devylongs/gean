@@ -17,8 +17,7 @@ var (
 	benchState       *types.State
 	benchStore       *store.ConsensusStore
 	benchTargetRoot  [32]byte
-	benchAtt         *types.AggregatedAttestation
-	benchProof       *types.AggregatedSignatureProof
+	benchPubkey      xmss.CPubKey
 )
 
 func loadBenchFixture(tb testing.TB) {
@@ -68,62 +67,10 @@ func buildBenchFixture() {
 	}
 	benchTargetRoot = stateRoot
 
-	attData := &types.AttestationData{
-		Slot:   1,
-		Head:   &types.Checkpoint{Root: benchTargetRoot, Slot: 1},
-		Target: &types.Checkpoint{Root: benchTargetRoot, Slot: 1},
-		Source: &types.Checkpoint{Root: benchTargetRoot, Slot: 0},
-	}
-	dataRoot, err := attData.HashTreeRoot()
+	benchPubkey, err = xmss.ParsePublicKey(pkBytes)
 	if err != nil {
 		benchFixtureErr = err
 		return
-	}
-
-	attSlot, err := slot32(attData.Slot)
-	if err != nil {
-		benchFixtureErr = err
-		return
-	}
-	sigBytes, err := kp.Sign(attSlot, dataRoot)
-	if err != nil {
-		benchFixtureErr = err
-		return
-	}
-
-	cpk, err := xmss.ParsePublicKey(pkBytes)
-	if err != nil {
-		benchFixtureErr = err
-		return
-	}
-	csig, err := xmss.ParseSignature(sigBytes[:])
-	if err != nil {
-		benchFixtureErr = err
-		return
-	}
-	defer xmss.FreeSignature(csig)
-
-	proofBytes, err := xmss.AggregateSignatures(
-		[]xmss.CPubKey{cpk},
-		[]xmss.CSig{csig},
-		dataRoot,
-		attSlot,
-	)
-	if err != nil {
-		benchFixtureErr = err
-		return
-	}
-
-	aggBits := types.NewBitlistSSZ(1)
-	types.BitlistSet(aggBits, 0)
-
-	benchAtt = &types.AggregatedAttestation{
-		AggregationBits: aggBits,
-		Data:            attData,
-	}
-	benchProof = &types.AggregatedSignatureProof{
-		Participants: aggBits,
-		ProofData:    proofBytes,
 	}
 
 	benchStore = store.NewConsensusStore(storage.NewInMemoryBackend())
@@ -132,10 +79,39 @@ func buildBenchFixture() {
 
 func buildBenchSignedBlock(n int) (*types.SignedBlock, error) {
 	atts := make([]*types.AggregatedAttestation, n)
-	proofs := make([]*types.AggregatedSignatureProof, n)
+	inputs := make([]xmss.Type1Input, 0, n+1)
 	for i := range n {
-		atts[i] = benchAtt
-		proofs[i] = benchProof
+		data := &types.AttestationData{
+			Slot:   uint64(i + 1),
+			Head:   &types.Checkpoint{Root: benchTargetRoot, Slot: uint64(i + 1)},
+			Target: &types.Checkpoint{Root: benchTargetRoot, Slot: uint64(i + 1)},
+			Source: &types.Checkpoint{Root: benchTargetRoot},
+		}
+		root, err := data.HashTreeRoot()
+		if err != nil {
+			return nil, err
+		}
+		raw, err := benchKeyPair.Sign(uint32(data.Slot), root)
+		if err != nil {
+			return nil, err
+		}
+		signature, err := xmss.ParseSignature(raw[:])
+		if err != nil {
+			return nil, err
+		}
+		proof, err := xmss.AggregateSignatures(
+			[]xmss.CPubKey{benchPubkey},
+			[]xmss.CSig{signature},
+			root,
+			uint32(data.Slot),
+		)
+		xmss.FreeSignature(signature)
+		if err != nil {
+			return nil, err
+		}
+		bits := types.BitlistFromIndices([]uint64{0})
+		atts[i] = &types.AggregatedAttestation{AggregationBits: bits, Data: data}
+		inputs = append(inputs, xmss.Type1Input{Pubkeys: []xmss.CPubKey{benchPubkey}, Proof: proof})
 	}
 
 	block := &types.Block{
@@ -156,13 +132,29 @@ func buildBenchSignedBlock(n int) (*types.SignedBlock, error) {
 	if err != nil {
 		return nil, err
 	}
+	signature, err := xmss.ParseSignature(proposerSig[:])
+	if err != nil {
+		return nil, err
+	}
+	proposerProof, err := xmss.AggregateSignatures(
+		[]xmss.CPubKey{benchPubkey},
+		[]xmss.CSig{signature},
+		blockRoot,
+		blockSlot,
+	)
+	xmss.FreeSignature(signature)
+	if err != nil {
+		return nil, err
+	}
+	inputs = append(inputs, xmss.Type1Input{Pubkeys: []xmss.CPubKey{benchPubkey}, Proof: proposerProof})
+	proof, err := xmss.MergeType1Proofs(inputs)
+	if err != nil {
+		return nil, err
+	}
 
 	return &types.SignedBlock{
 		Block: block,
-		Signature: &types.BlockSignatures{
-			ProposerSignature:     proposerSig,
-			AttestationSignatures: proofs,
-		},
+		Proof: &types.MultiMessageAggregate{Proof: proof},
 	}, nil
 }
 
@@ -185,6 +177,5 @@ func benchN(b *testing.B, n int) {
 	}
 }
 
-func BenchmarkVerifyBlockSignatures_1(b *testing.B)  { benchN(b, 1) }
-func BenchmarkVerifyBlockSignatures_8(b *testing.B)  { benchN(b, 8) }
-func BenchmarkVerifyBlockSignatures_16(b *testing.B) { benchN(b, 16) }
+func BenchmarkVerifyBlockSignatures_1(b *testing.B) { benchN(b, 1) }
+func BenchmarkVerifyBlockSignatures_8(b *testing.B) { benchN(b, 8) }

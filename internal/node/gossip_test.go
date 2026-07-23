@@ -26,9 +26,9 @@ func TestOnGossipAggregatedAttestationRejectsMissingProof(t *testing.T) {
 
 	e.onGossipAggregatedAttestation(&types.SignedAggregatedAttestation{
 		Data: attData,
-		Proof: &types.AggregatedSignatureProof{
+		Proof: &types.SingleMessageAggregate{
 			Participants: types.NewBitlistSSZ(0),
-			ProofData:    nil,
+			Proof:        nil,
 		},
 	})
 	if e.Store.NewPayloads.Len() != 0 {

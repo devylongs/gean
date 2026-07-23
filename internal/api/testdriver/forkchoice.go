@@ -113,6 +113,11 @@ func (sess *Session) ForkChoiceInitHandler() http.HandlerFunc {
 	}
 }
 
+func stepChecksSafeTarget(step *specfixtures.ForkChoiceStep) bool {
+	c := step.Checks
+	return c != nil && (c.SafeTarget != nil || c.SafeTargetSlot != nil || c.SafeTargetRootLabel != nil)
+}
+
 func writeInitFailure(w http.ResponseWriter, msg string) {
 	resp := driverStepResponse{Accepted: false, Error: &msg, Snapshot: driverSnapshot{}}
 	writeJSON(w, http.StatusBadRequest, resp)
@@ -151,7 +156,12 @@ func (sess *Session) ForkChoiceStepHandler() http.HandlerFunc {
 			stepErr = fmt.Errorf("unknown stepType %q", step.StepType)
 		}
 
-		sess.refreshSafeTarget()
+		// Safe target mutates the protoarray with the supermajority threshold, which
+		// would corrupt the next step's head deltas. Compute it only when the step
+		// actually checks it, and after the head is already stored for this step.
+		if stepChecksSafeTarget(&step) {
+			sess.refreshSafeTarget()
+		}
 		snap := sess.loadSnapshot()
 		accepted := stepErr == nil
 		var errPtr *string

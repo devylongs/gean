@@ -34,6 +34,10 @@ const (
 	ErrMissingTargetState
 	ErrNotProposer
 	ErrDuplicateAttestationData
-	ErrTooManyAttestationData
 	ErrJustifiedDivergenceNotClosed
+	ErrSourceNotAncestorOfTarget
+	ErrTargetNotAncestorOfHead
+	ErrAttestationSlotBeforeHead
+	ErrBlockTooFarInFuture
+	ErrHeadNotDescendantOfFinalized
 )

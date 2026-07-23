@@ -53,11 +53,7 @@ func VerifySignaturesHandler() http.HandlerFunc {
 		consensusStore.SetLatestJustified(&types.Checkpoint{Root: anchorRoot, Slot: header.Slot})
 		consensusStore.SetLatestFinalized(&types.Checkpoint{Root: anchorRoot, Slot: header.Slot})
 
-		envelope := fixture.SignedBlock
-		if envelope.Block.Slot == 0 && envelope.Block.ParentRoot == "" {
-			envelope = fixture.SignedBlockWithAttestation
-		}
-		signedBlock, err := envelope.ToSignedBlock()
+		signedBlock, err := fixture.SignedBlock.ToSignedBlock()
 		if err != nil {
 			writeVerifyFailure(w, err.Error())
 			return

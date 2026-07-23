@@ -15,10 +15,10 @@ func mockAttestationData() *types.AttestationData {
 	}
 }
 
-func mockProof(ids []uint64) *types.AggregatedSignatureProof {
-	return &types.AggregatedSignatureProof{
+func mockProof(ids []uint64) *types.SingleMessageAggregate {
+	return &types.SingleMessageAggregate{
 		Participants: types.BitlistFromIndices(ids),
-		ProofData:    []byte{0xde, 0xad},
+		Proof:        []byte{0xde, 0xad},
 	}
 }
 

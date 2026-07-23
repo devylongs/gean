@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Pinned to devnet4 f66d4a9. leanMultisig ships an experimental zk-alloc allocator,
-# but it is opt-in (a consumer must install #[global_allocator] itself). We deliberately
-# do NOT, so the staticlib stays on the system allocator — zk-alloc can corrupt memory.
-rec_aggregation = { git = "https://github.com/leanEthereum/leanMultisig.git", rev = "f66d4a9" }
-leansig_wrapper = { git = "https://github.com/leanEthereum/leanMultisig.git", rev = "f66d4a9" }
-backend = { git = "https://github.com/leanEthereum/leanMultisig.git", rev = "f66d4a9" }
+# leanVM devnet5 HEAD. The root crate re-exports the aggregation API,
+# Xmss key/signature types, and setup_prover/setup_verifier (which now own
+# the internal arena allocator; no global_allocator override). Proofs stay
+# verify-compatible with the leanSpec fixture rev (8fcbd779), so this is a
+# non-snark-breaking bump.
+lean-multisig = { git = "https://github.com/leanEthereum/leanVM.git", rev = "e2592df4e30fdddbbf8ae26a333116c68cec7026" }
+# split-by-message is not re-exported by the root crate; pull it from the
+# aggregation crate directly (same git rev, identical re-exported types).
+rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "e2592df4e30fdddbbf8ae26a333116c68cec7026" }
+# Poseidon permutation primitives for the spec test-vector FFI (poseidon_permute_*).
+backend = { git = "https://github.com/leanEthereum/leanVM.git", rev = "e2592df4e30fdddbbf8ae26a333116c68cec7026" }
 
 [lib]
 # Built as an rlib so its `#[no_mangle] pub extern "C"` symbols can be

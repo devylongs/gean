@@ -25,7 +25,7 @@ func StateTransitionHandler() http.HandlerFunc {
 		}
 
 		if len(fixture.Blocks) == 0 {
-			if fixture.ExpectException != "" {
+			if fixture.ExpectedException() != "" {
 				if err := statetransition.ProcessSlots(state, state.Slot); err != nil {
 					writeStateTransitionFailure(w, err.Error())
 					return

@@ -20,17 +20,11 @@ type Block struct {
 	Body          *BlockBody     `json:"body"`
 }
 
-type AggregatedSignatureProof struct {
-	Participants []byte `json:"participants" ssz:"bitlist" ssz-max:"4096"`
-	ProofData    []byte `json:"proof_data" ssz-max:"1048576"`
-}
-
-type BlockSignatures struct {
-	AttestationSignatures []*AggregatedSignatureProof `json:"attestation_signatures" ssz-max:"4096"`
-	ProposerSignature     [SignatureSize]byte         `json:"proposer_signature" ssz-size:"2536"`
+type MultiMessageAggregate struct {
+	Proof []byte `json:"proof" ssz-max:"524288"`
 }
 
 type SignedBlock struct {
-	Block     *Block           `json:"block"`
-	Signature *BlockSignatures `json:"signature"`
+	Block *Block                 `json:"block"`
+	Proof *MultiMessageAggregate `json:"proof"`
 }

@@ -8,6 +8,11 @@ TESTNET_DIR ?= testnet
 NUM_VALIDATORS ?= 5
 NUM_NODES ?= 3
 
+# Pinned leanSpec revision for spec fixtures. Must be defined before the test-spec/test-all
+# rules that reference it: Make expands a rule's prerequisites when it reads the rule, so a
+# definition placed after those rules would expand to empty in their prerequisites.
+LEAN_SPEC_COMMIT_HASH := eca701efeb5931010fe63925cd203c9ee55b2dbc
+
 help: ## Show help for each Makefile recipe
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -30,10 +35,10 @@ test: ## Run unit tests (excludes crypto FFI and spec tests)
 test-ffi: ffi ## Run XMSS crypto FFI tests (builds FFI first)
 	go test ./xmss/ -v -count=1
 
-test-spec: leanSpec/fixtures ## Run spec fixture tests only (fast, excludes xmss FFI)
+test-spec: leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH) ## Run spec fixture tests only (fast, excludes xmss FFI)
 	go test ./internal/spectests/  -count=1 -tags=spectests
 
-test-all: leanSpec/fixtures ## Run all tests including spec fixtures and xmss FFI (slow)
+test-all: leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH) ## Run all tests including spec fixtures and xmss FFI (slow)
 	go test ./... -v -count=1 -tags=spectests
 
 lint: ## Run linters for go & rust
@@ -50,8 +55,8 @@ sszgen: ## Regenerate SSZ encoding files from struct tags
 	sszgen --path internal/types --objs ChainConfig --output internal/types/config_encoding.go
 	sszgen --path internal/types --objs Checkpoint --output internal/types/checkpoint_encoding.go
 	sszgen --path internal/types --objs Validator --output internal/types/validator_encoding.go
-	sszgen --path internal/types --objs AttestationData,Attestation,SignedAttestation,AggregatedAttestation,SignedAggregatedAttestation --exclude-objs Checkpoint --output internal/types/attestation_encoding.go
-	sszgen --path internal/types --objs BlockHeader,BlockBody,Block,AggregatedSignatureProof,BlockSignatures,SignedBlock --exclude-objs Checkpoint,AttestationData,Attestation,AggregatedAttestation,AggregatedSignatureProof --output internal/types/block_encoding.go
+	sszgen --path internal/types --objs AttestationData,Attestation,SignedAttestation,AggregatedAttestation,SingleMessageAggregate,SignedAggregatedAttestation --exclude-objs Checkpoint --output internal/types/attestation_encoding.go
+	sszgen --path internal/types --objs BlockHeader,BlockBody,Block,MultiMessageAggregate,SignedBlock --exclude-objs Checkpoint,AttestationData,AggregatedAttestation --output internal/types/block_encoding.go
 	sszgen --path internal/types --objs State --exclude-objs ChainConfig,Checkpoint,Validator,BlockHeader --output internal/types/state_encoding.go
 	sszgen --path internal/types --objs BlocksByRangeRequest --output internal/types/blocks_by_range_encoding.go
 
@@ -101,27 +106,34 @@ run-node2: build ## Run node2 on port 9002
 		--api-port 5054 \
 		--metrics-port 8082
 
-# --- leanSpec fixtures ---
+# --- leanSpec fixtures --- (LEAN_SPEC_COMMIT_HASH is defined near the top, before test-spec)
 
-LEAN_SPEC_COMMIT_HASH := 1589f87
-
-leanSpec: ## Clone leanSpec at pinned main commit (contains devnet-4 changes)
+leanSpec/.git: ## Clone leanSpec
 	git clone https://github.com/leanEthereum/leanSpec.git --single-branch
-	cd leanSpec && git checkout $(LEAN_SPEC_COMMIT_HASH)
 
-leanSpec/fixtures: leanSpec ## Generate consensus test fixtures from leanSpec
-	cd leanSpec && uv run fill --fork lstar --scheme=prod -o fixtures
+leanSpec/.pinned-$(LEAN_SPEC_COMMIT_HASH): leanSpec/.git
+	cd leanSpec && git fetch origin $(LEAN_SPEC_COMMIT_HASH) && git checkout --detach $(LEAN_SPEC_COMMIT_HASH)
+	touch $@
+
+leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH): leanSpec/.pinned-$(LEAN_SPEC_COMMIT_HASH)
+	@cd leanSpec && for attempt in 1 2 3; do \
+		uv run keys --download --scheme=prod && break; \
+		test $$attempt -eq 3 && exit 1; \
+		sleep $$((attempt * 5)); \
+	done
+	cd leanSpec && uv run fill --clean --fork=lstar --scheme=prod --output=fixtures
+	touch $@
 
 # --- Docker ---
 
 DOCKER_TAG ?= local
 
-docker-build: ## Build Docker image
+docker-build: ## Build Docker image (also tagged :shadow for the lean-shadow-fuzzer)
 	docker build \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
 		-t gean:$(VERSION) \
-		-t ghcr.io/geanlabs/gean:devnet4 .
+		-t ghcr.io/geanlabs/gean:devnet5 .
 
 # --- Multi-client devnet ---
 

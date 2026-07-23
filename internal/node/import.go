@@ -3,7 +3,6 @@ package node
 import (
 	"github.com/geanlabs/gean/internal/blockprocessor"
 	"github.com/geanlabs/gean/internal/logger"
-	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -12,19 +11,12 @@ func (e *Engine) onBlock(signedBlock *types.SignedBlock) {
 		return
 	}
 
-	oldFinalizedSlot := e.Store.LatestFinalized().Slot
 	queue := []*types.SignedBlock{signedBlock}
 
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 		e.processOneBlock(current, &queue)
-	}
-
-	newFinalized := e.Store.LatestFinalized()
-	if newFinalized.Slot > oldFinalizedSlot {
-		store.PruneOnFinalization(e.Store, e.FC, oldFinalizedSlot, newFinalized.Slot, newFinalized.Root)
-		e.discardFinalizedPending(newFinalized.Slot)
 	}
 }
 
@@ -40,6 +32,10 @@ func (e *Engine) processOneBlock(signedBlock *types.SignedBlock, queue *[]*types
 		return
 	}
 	parentRoot := block.ParentRoot
+
+	// We now hold this block (whether it imports or gets buffered), so any pending by-root
+	// fetch for it is done — drop the in-flight marker so a future gap can re-request it.
+	delete(e.fetchInFlight, blockRoot)
 
 	if e.Store.HasState(blockRoot) {
 		return
@@ -75,13 +71,9 @@ func (e *Engine) importKnownParentBlock(
 		logger.Error(logger.Chain, "block processing failed slot=%d block_root=0x%x: %v", block.Slot, blockRoot, err)
 		return
 	}
+	e.dispatchRecovery(signedBlock)
 
 	e.FC.OnBlock(block.Slot, blockRoot, parentRoot)
-
-	finalized := e.Store.LatestFinalized()
-	if finalized.Slot > 0 {
-		e.FC.Prune(finalized.Root)
-	}
 
 	e.updateHead()
 	e.Pending.ClearDepth(blockRoot)

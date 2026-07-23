@@ -12,7 +12,7 @@ require (
 	github.com/libp2p/go-libp2p-pubsub v0.16.0
 	github.com/multiformats/go-multiaddr v0.16.0
 	github.com/prometheus/client_golang v1.22.0
-	golang.org/x/sync v0.19.0
+	github.com/prometheus/client_model v0.6.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -90,11 +90,10 @@ require (
 	github.com/pion/turn/v4 v4.0.2 // indirect
 	github.com/pion/webrtc/v4 v4.1.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.64.0 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/quic-go/webtransport-go v0.10.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
@@ -108,6 +107,7 @@ require (
 	golang.org/x/exp v0.0.0-20250606033433-dcc06ee1d476 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260109210033-bd525da824e2 // indirect
 	golang.org/x/text v0.34.0 // indirect

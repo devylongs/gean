@@ -119,7 +119,7 @@ func pruneBlocksByRoots(s *ConsensusStore, roots [][32]byte) int {
 		logger.Error(logger.Store, "prune blocks: delete bodies failed: %v", err)
 		return 0
 	}
-	if err := wb.DeleteBatch(storage.TableBlockSignatures, keys); err != nil {
+	if err := wb.DeleteBatch(storage.TableSignedBlocks, keys); err != nil {
 		logger.Error(logger.Store, "prune blocks: delete signatures failed: %v", err)
 		return 0
 	}

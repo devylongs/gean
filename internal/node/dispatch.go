@@ -23,6 +23,9 @@ func (e *Engine) dispatch(ctx context.Context, ticks <-chan time.Time) {
 		case agg := <-e.AggregationCh:
 			e.onGossipAggregatedAttestation(agg)
 
+		case result := <-e.ProposalResultCh:
+			e.acceptProposal(ctx, result)
+
 		case root := <-e.FailedRootCh:
 			e.onFailedRoot(root)
 		}

@@ -106,15 +106,3 @@ func recoverStoreTime(s *store.ConsensusStore, genesisTimeSec uint64) error {
 		intervals, genesisTimeSec, nowMs)
 	return nil
 }
-
-func forkChoiceAnchor(s *store.ConsensusStore) (uint64, [32]byte, [32]byte, error) {
-	if s == nil {
-		return 0, types.ZeroRoot, types.ZeroRoot, fmt.Errorf("fork choice anchor: store is nil")
-	}
-	headRoot := s.Head()
-	headHeader := s.GetBlockHeader(headRoot)
-	if headHeader == nil {
-		return 0, types.ZeroRoot, types.ZeroRoot, fmt.Errorf("fork choice anchor: missing head header for root 0x%x", headRoot)
-	}
-	return headHeader.Slot, headRoot, headHeader.ParentRoot, nil
-}

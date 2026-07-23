@@ -10,6 +10,14 @@ type StateTransitionFixture struct {
 	Post                   *TestPostState `json:"post"`
 	ExpectException        string         `json:"expectException"`
 	ExpectExceptionMessage string         `json:"expectExceptionMessage"`
+	RejectionReason        string         `json:"rejectionReason"`
+}
+
+func (f *StateTransitionFixture) ExpectedException() string {
+	if f.ExpectException != "" {
+		return f.ExpectException
+	}
+	return f.RejectionReason
 }
 
 type TestState struct {
@@ -60,8 +68,8 @@ type TestDataList struct {
 }
 
 type TestValidator struct {
-	AttestationPubkey string `json:"attestationPubkey"`
-	ProposalPubkey    string `json:"proposalPubkey"`
+	AttestationPubkey string `json:"attestationPublicKey"`
+	ProposalPubkey    string `json:"proposalPublicKey"`
 	Pubkey            string `json:"pubkey"`
 	Index             uint64 `json:"index"`
 }
@@ -117,10 +125,13 @@ type ForkChoiceStep struct {
 	Time        *uint64              `json:"time,omitempty"`
 	Interval    *uint64              `json:"interval,omitempty"`
 	HasProposal *bool                `json:"hasProposal,omitempty"`
+	// TickToSlot, when present and false, delivers a block ahead of the store
+	// clock instead of advancing the clock to the block's slot first.
+	TickToSlot *bool `json:"tickToSlot,omitempty"`
 }
 
 type FCGossipAttestation struct {
-	ValidatorID uint64      `json:"validatorId"`
+	ValidatorID uint64      `json:"validatorIndex"`
 	Data        TestAttData `json:"data"`
 	Signature   string      `json:"signature"`
 	Proof       *FCProof    `json:"proof,omitempty"`
@@ -128,7 +139,7 @@ type FCGossipAttestation struct {
 
 type FCProof struct {
 	Participants TestDataList `json:"participants"`
-	ProofData    FCProofData  `json:"proofData"`
+	Proof        FCProofData  `json:"proof"`
 }
 
 type FCProofData struct {
@@ -164,29 +175,18 @@ type FCAttestationCheck struct {
 }
 
 type VerifySignaturesFixture struct {
-	Network                    string             `json:"network"`
-	LeanEnv                    string             `json:"leanEnv"`
-	AnchorState                TestState          `json:"anchorState"`
-	SignedBlock                FixtureSignedBlock `json:"signedBlock"`
-	SignedBlockWithAttestation FixtureSignedBlock `json:"signedBlockWithAttestation"`
-	ExpectException            *string            `json:"expectException"`
+	Network         string             `json:"network"`
+	LeanEnv         string             `json:"leanEnv"`
+	AnchorState     TestState          `json:"anchorState"`
+	SignedBlock     FixtureSignedBlock `json:"signedBlock"`
+	RejectionReason *string            `json:"rejectionReason"`
 }
 
 type FixtureSignedBlock struct {
-	Block     TestBlock          `json:"block"`
-	Signature FixtureBlockSigPL  `json:"signature"`
-	Message   *FixtureSBAMessage `json:"message,omitempty"`
+	Block TestBlock         `json:"block"`
+	Proof FixtureBlockProof `json:"proof"`
 }
 
-type FixtureSBAMessage struct {
-	Block TestBlock `json:"block"`
-}
-
-type FixtureBlockSigPL struct {
-	ProposerSignature     string             `json:"proposerSignature"`
-	AttestationSignatures FixtureAttSigsList `json:"attestationSignatures"`
-}
-
-type FixtureAttSigsList struct {
-	Data []FCProof `json:"data"`
+type FixtureBlockProof struct {
+	Proof FCProofData `json:"proof"`
 }

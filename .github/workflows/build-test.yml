@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 env:
-  GO_VERSION: "1.25.9"
-  RUST_VERSION: "1.88"
+  GO_VERSION: "1.25.12"
+  RUST_VERSION: "1.92"
 
 jobs:
   build-and-test:
@@ -48,3 +48,6 @@ jobs:
 
       - name: Run unit tests
         run: make test
+
+      - name: Run race tests
+        run: go test -race ./internal/node ./internal/store ./internal/proving -count=1

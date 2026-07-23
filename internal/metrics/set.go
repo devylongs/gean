@@ -24,6 +24,9 @@ func SetKnownAggregatedPayloads(n int)       { metricLatestKnownAggregatedPayloa
 func SetPendingAttestationsTotal(n int)      { metricPendingAttestationsTotal.Set(countValue(n)) }
 func SetAttestationCommitteeSubnet(n uint64) { metricAttestationCommitteeSubnet.Set(float64(n)) }
 func SetGossipMeshPeers(n int)               { metricGossipMeshPeers.Set(countValue(n)) }
+func SetProvingQueueDepth(operation string, n int) {
+	metricProvingQueueDepth.WithLabelValues(labelOrUnknown(operation)).Set(countValue(n))
+}
 
 func SetConnectedPeers(client string, n int) {
 	metricConnectedPeers.WithLabelValues(labelOrUnknown(client)).Set(countValue(n))

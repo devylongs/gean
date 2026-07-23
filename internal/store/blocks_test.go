@@ -116,7 +116,7 @@ func TestWriteBlockDataReturnsErrors(t *testing.T) {
 	if err := store.WriteBlockData(s, root, &types.SignedBlock{}); err == nil {
 		t.Fatal("expected missing block error")
 	}
-	if err := store.WriteBlockData(s, root, &types.SignedBlock{Block: &types.Block{}, Signature: &types.BlockSignatures{}}); err == nil {
+	if err := store.WriteBlockData(s, root, &types.SignedBlock{Block: &types.Block{}, Proof: &types.MultiMessageAggregate{}}); err == nil {
 		t.Fatal("expected missing block body error")
 	}
 	if got := s.GetSignedBlock(root); got != nil {
@@ -151,6 +151,6 @@ func makeSignedBlock() *types.SignedBlock {
 			Slot: 1,
 			Body: &types.BlockBody{},
 		},
-		Signature: &types.BlockSignatures{},
+		Proof: &types.MultiMessageAggregate{},
 	}
 }

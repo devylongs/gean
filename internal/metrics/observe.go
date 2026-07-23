@@ -61,3 +61,15 @@ func ObserveAggregationWorkerTotalTime(seconds float64) {
 func ObserveBlockSignatureVerificationTime(seconds float64) {
 	observeNonNegative(metricBlockSignatureVerificationTime, seconds)
 }
+
+func ObserveProvingDuration(operation string, seconds float64) {
+	observeNonNegative(metricProvingDuration.WithLabelValues(labelOrUnknown(operation)), seconds)
+}
+
+func ObserveProofSize(proofType string, bytes int) {
+	observeNonNegative(metricProofSize.WithLabelValues(labelOrUnknown(proofType)), countValue(bytes))
+}
+
+func ObserveProofMergeComponents(n int) {
+	observeNonNegative(metricProofMergeComponents, countValue(n))
+}

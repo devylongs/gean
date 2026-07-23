@@ -12,7 +12,7 @@ func (e *Engine) bufferMissingParentBlock(
 	queue *[]*types.SignedBlock,
 ) {
 	block := signedBlock.Block
-	if e.Pending.Count() >= MaxPendingBlocks {
+	if e.Pending.Count() >= MaxPendingBlocks && !e.evictFarthestPending(block.Slot) {
 		logger.Warn(logger.Chain, "pending block cache full (%d), rejecting block slot=%d block_root=0x%x",
 			MaxPendingBlocks, block.Slot, blockRoot)
 		return
@@ -32,6 +32,7 @@ func (e *Engine) bufferMissingParentBlock(
 		block.Slot, blockRoot, parentRoot, depth)
 
 	e.Pending.SetDepth(blockRoot, depth)
+	e.Pending.SetSlot(blockRoot, block.Slot)
 	missingRoot := e.Pending.ResolveAncestor(parentRoot)
 	e.Pending.SetParent(blockRoot, parentRoot)
 	e.Store.StorePendingBlock(blockRoot, signedBlock)
@@ -42,6 +43,24 @@ func (e *Engine) bufferMissingParentBlock(
 		return
 	}
 	e.queueMissingBlockFetch(missingRoot)
+}
+
+// evictFarthestPending frees a slot in the full pending buffer for a block at
+// incomingSlot by discarding the entry farthest from the known chain. A full
+// buffer must not reject blocks near the connect frontier: those are the only
+// ones that can turn into imports, and turning them away is how a lagging
+// node's buffer stays poisoned with an unconnectable tail forever. When the
+// incoming block sits no closer than everything already held, it is the one
+// that loses.
+func (e *Engine) evictFarthestPending(incomingSlot uint64) bool {
+	evictRoot, evictSlot, ok := e.Pending.HighestSlotEntry()
+	if !ok || evictSlot <= incomingSlot {
+		return false
+	}
+	logger.Warn(logger.Chain, "pending block cache full (%d), evicting slot=%d block_root=0x%x to admit slot=%d",
+		MaxPendingBlocks, evictSlot, evictRoot, incomingSlot)
+	e.Pending.DiscardSubtree(evictRoot)
+	return true
 }
 
 func (e *Engine) queueStoredAncestor(missingRoot [32]byte, queue *[]*types.SignedBlock) ([32]byte, bool) {
@@ -105,6 +124,10 @@ func (e *Engine) discardFinalizedPending(finalizedSlot uint64) {
 }
 
 func (e *Engine) onFailedRoot(failedRoot [32]byte) {
+	// The fetch for this root is exhausted; drop its in-flight marker so it can be
+	// re-requested if a later child reintroduces the gap.
+	delete(e.fetchInFlight, failedRoot)
+
 	children, ok := e.Pending.RemoveBucket(failedRoot)
 	if !ok {
 		return

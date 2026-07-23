@@ -78,4 +78,10 @@ var (
 		Name: "lean_attestation_aggregate_coverage_diff_validators",
 		Help: "Validator coverage delta between block payloads and timely pre-merge payloads, by direction",
 	}, []string{"direction"})
+	metricProvingQueueDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "lean_proving_queue_depth", Help: "Queued recursive proof work",
+	}, []string{"operation"})
+	metricProcessRSSBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "lean_node_rss_bytes", Help: "Process resident set size in bytes (includes prover memory outside the Go heap)",
+	})
 )

@@ -34,8 +34,8 @@ func TestOnBlockWithoutVerificationPersistsBlock(t *testing.T) {
 	block := processorEmptyBlockWithStateRoot(t, parentState, parentRoot)
 
 	if err := OnBlockWithoutVerification(s, &types.SignedBlock{
-		Block:     block,
-		Signature: &types.BlockSignatures{},
+		Block: block,
+		Proof: &types.MultiMessageAggregate{},
 	}); err != nil {
 		t.Fatalf("process block: %v", err)
 	}
@@ -65,8 +65,8 @@ func TestOnBlockWithoutVerificationReturnsPersistenceError(t *testing.T) {
 	s.Backend = failingProcessorWriteBackend{InMemoryBackend: s.Backend.(*storage.InMemoryBackend)}
 
 	err := OnBlockWithoutVerification(s, &types.SignedBlock{
-		Block:     block,
-		Signature: &types.BlockSignatures{},
+		Block: block,
+		Proof: &types.MultiMessageAggregate{},
 	})
 	if err == nil {
 		t.Fatal("expected persistence error")
@@ -86,9 +86,9 @@ func TestPersistBlockUsesSingleBatch(t *testing.T) {
 		failAfter:       1,
 	}
 
-	_, err := persistBlock(s, blockRoot, &types.SignedBlock{
-		Block:     block,
-		Signature: &types.BlockSignatures{},
+	err := persistBlock(s, blockRoot, &types.SignedBlock{
+		Block: block,
+		Proof: &types.MultiMessageAggregate{},
 	}, postState)
 	if err == nil {
 		t.Fatal("expected batch write error")
@@ -112,22 +112,30 @@ func TestPersistBlockWritesCheckpointMetadata(t *testing.T) {
 	postState.LatestJustified = &types.Checkpoint{Slot: 1, Root: blockRoot}
 	postState.LatestFinalized = &types.Checkpoint{Slot: 1, Root: blockRoot}
 
-	finalizedAdvanced, err := persistBlock(s, blockRoot, &types.SignedBlock{
-		Block:     block,
-		Signature: &types.BlockSignatures{},
+	finalizedBefore := s.LatestFinalized()
+
+	err := persistBlock(s, blockRoot, &types.SignedBlock{
+		Block: block,
+		Proof: &types.MultiMessageAggregate{},
 	}, postState)
 	if err != nil {
 		t.Fatalf("persist block: %v", err)
 	}
-	if !finalizedAdvanced {
-		t.Fatal("finalized advancement was not reported")
-	}
 	if got := s.LatestJustified(); got == nil || got.Slot != 1 || got.Root != blockRoot {
 		t.Fatalf("latest justified=%v, want slot 1 root 0x%x", got, blockRoot)
 	}
-	if got := s.LatestFinalized(); got == nil || got.Slot != 1 || got.Root != blockRoot {
-		t.Fatalf("latest finalized=%v, want slot 1 root 0x%x", got, blockRoot)
+	// Finalization is derived from the canonical head during head selection,
+	// never persisted by the import path, so this write must leave it untouched.
+	if got := s.LatestFinalized(); !checkpointEqual(got, finalizedBefore) {
+		t.Fatalf("latest finalized=%v, want unchanged %v", got, finalizedBefore)
 	}
+}
+
+func checkpointEqual(a, b *types.Checkpoint) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Slot == b.Slot && a.Root == b.Root
 }
 
 type failingProcessorWriteBackend struct {

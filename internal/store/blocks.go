@@ -72,7 +72,7 @@ func (s *ConsensusStore) GetSignedBlock(root [32]byte) *types.SignedBlock {
 	if err != nil {
 		return nil
 	}
-	data, err := rv.Get(storage.TableBlockSignatures, root[:])
+	data, err := rv.Get(storage.TableSignedBlocks, root[:])
 	if err != nil || data == nil {
 		return nil
 	}
@@ -118,7 +118,7 @@ func WriteBlockData(s *ConsensusStore, root [32]byte, signedBlock *types.SignedB
 			return fmt.Errorf("write block data: put body: %w", err)
 		}
 	}
-	if err := wb.PutBatch(storage.TableBlockSignatures, []storage.KV{{Key: root[:], Value: fullData}}); err != nil {
+	if err := wb.PutBatch(storage.TableSignedBlocks, []storage.KV{{Key: root[:], Value: fullData}}); err != nil {
 		return fmt.Errorf("write block data: put signed block: %w", err)
 	}
 	if err := wb.Commit(); err != nil {

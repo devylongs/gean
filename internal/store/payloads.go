@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"sync"
 
 	"github.com/geanlabs/gean/internal/types"
@@ -8,7 +9,7 @@ import (
 
 type PayloadEntry struct {
 	Data   *types.AttestationData
-	Proofs []*types.AggregatedSignatureProof
+	Proofs []*types.SingleMessageAggregate
 }
 
 type PayloadBuffer struct {
@@ -26,7 +27,20 @@ func NewPayloadBuffer(capacity int) *PayloadBuffer {
 	}
 }
 
-func (pb *PayloadBuffer) Push(dataRoot [32]byte, attData *types.AttestationData, proof *types.AggregatedSignatureProof) {
+func (pb *PayloadBuffer) PushData(dataRoot [32]byte, attData *types.AttestationData) {
+	if pb == nil || attData == nil {
+		return
+	}
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	if _, ok := pb.data[dataRoot]; ok {
+		return
+	}
+	pb.data[dataRoot] = &PayloadEntry{Data: copyAttestationData(attData)}
+	pb.order = append(pb.order, dataRoot)
+}
+
+func (pb *PayloadBuffer) Push(dataRoot [32]byte, attData *types.AttestationData, proof *types.SingleMessageAggregate) {
 	if pb == nil {
 		return
 	}
@@ -44,16 +58,24 @@ func (pb *PayloadBuffer) Push(dataRoot [32]byte, attData *types.AttestationData,
 	}
 	if entry, ok := pb.data[dataRoot]; ok {
 		for _, existing := range entry.Proofs {
-			if validPayloadProof(existing) && bitlistEqual(existing.Participants, proof.Participants) {
+			if validPayloadProof(existing) && bitlistContains(existing.Participants, proof.Participants) {
 				return
 			}
 		}
-		entry.Proofs = append(entry.Proofs, storedProof)
+		kept := entry.Proofs[:0]
+		for _, existing := range entry.Proofs {
+			if bitlistContains(proof.Participants, existing.Participants) {
+				pb.totalProofs--
+				continue
+			}
+			kept = append(kept, existing)
+		}
+		entry.Proofs = append(kept, storedProof)
 		pb.totalProofs++
 	} else {
 		pb.data[dataRoot] = &PayloadEntry{
 			Data:   storedData,
-			Proofs: []*types.AggregatedSignatureProof{storedProof},
+			Proofs: []*types.SingleMessageAggregate{storedProof},
 		}
 		pb.order = append(pb.order, dataRoot)
 		pb.totalProofs++
@@ -135,6 +157,12 @@ func (pb *PayloadBuffer) ExtractLatestAttestations() map[uint64]*types.Attestati
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
 
+	// Each validator keeps the vote with the highest (slot, canonical data root).
+	// An equivocator can cast two distinct votes at one slot; resolving that tie by
+	// the larger data root makes the extracted set a pure function of the pool,
+	// independent of insertion order, so every node runs fork choice on the same LMD
+	// view. dataRoot is the attestation-data hash-tree-root (the buffer key).
+	chosenRoot := make(map[uint64][32]byte)
 	for _, dataRoot := range pb.order {
 		entry, ok := pb.data[dataRoot]
 		if !ok || !validPayloadEntry(entry) {
@@ -146,16 +174,29 @@ func (pb *PayloadBuffer) ExtractLatestAttestations() map[uint64]*types.Attestati
 			}
 			participantLen := types.BitlistLen(proof.Participants)
 			for vid := range participantLen {
-				if types.BitlistGet(proof.Participants, vid) {
-					existing, ok := result[vid]
-					if !ok || existing.Slot < entry.Data.Slot {
-						result[vid] = copyAttestationData(entry.Data)
-					}
+				if !types.BitlistGet(proof.Participants, vid) {
+					continue
 				}
+				if existing, ok := result[vid]; ok &&
+					!outranksVote(entry.Data.Slot, dataRoot, existing.Slot, chosenRoot[vid]) {
+					continue
+				}
+				result[vid] = copyAttestationData(entry.Data)
+				chosenRoot[vid] = dataRoot
 			}
 		}
 	}
 	return result
+}
+
+// outranksVote reports whether (slotA, rootA) is the later LMD vote than
+// (slotB, rootB): a higher slot wins, and an equal-slot tie breaks toward the
+// larger canonical data root.
+func outranksVote(slotA uint64, rootA [32]byte, slotB uint64, rootB [32]byte) bool {
+	if slotA != slotB {
+		return slotA > slotB
+	}
+	return bytes.Compare(rootA[:], rootB[:]) > 0
 }
 
 func (pb *PayloadBuffer) PruneBelow(finalizedSlot uint64) int {
@@ -197,7 +238,7 @@ func (pb *PayloadBuffer) Entries() map[[32]byte]*PayloadEntry {
 		if !ok || !validPayloadEntry(entry) {
 			continue
 		}
-		proofs := make([]*types.AggregatedSignatureProof, 0, len(entry.Proofs))
+		proofs := make([]*types.SingleMessageAggregate, 0, len(entry.Proofs))
 		for _, proof := range entry.Proofs {
 			if validPayloadProof(proof) {
 				proofs = append(proofs, copyProof(proof))
@@ -214,7 +255,7 @@ func (pb *PayloadBuffer) Entries() map[[32]byte]*PayloadEntry {
 type PayloadKV struct {
 	DataRoot [32]byte
 	Data     *types.AttestationData
-	Proof    *types.AggregatedSignatureProof
+	Proof    *types.SingleMessageAggregate
 }
 
 func (s *ConsensusStore) PromoteNewToKnown() {
@@ -239,20 +280,18 @@ func (s *ConsensusStore) ExtractLatestNewAttestations() map[uint64]*types.Attest
 }
 
 func validPayloadEntry(entry *PayloadEntry) bool {
-	return entry != nil && entry.Data != nil && len(entry.Proofs) > 0
+	return entry != nil && entry.Data != nil
 }
 
-func validPayloadProof(proof *types.AggregatedSignatureProof) bool {
+func validPayloadProof(proof *types.SingleMessageAggregate) bool {
 	return proof != nil &&
+		len(proof.Proof) > 0 &&
 		types.BitlistCount(proof.Participants) > 0
 }
 
-func bitlistEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
+func bitlistContains(superset, subset []byte) bool {
+	for _, index := range types.BitlistIndices(subset) {
+		if !types.BitlistGet(superset, index) {
 			return false
 		}
 	}

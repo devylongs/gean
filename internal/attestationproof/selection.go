@@ -8,10 +8,10 @@ import (
 
 func Select(
 	data *types.AttestationData,
-	proofs []*types.AggregatedSignatureProof,
+	proofs []*types.SingleMessageAggregate,
 	state *types.State,
 	merger MergeProvider,
-) (*types.AggregatedAttestation, *types.AggregatedSignatureProof, bool, error) {
+) (*types.AggregatedAttestation, *types.SingleMessageAggregate, bool, error) {
 	if data == nil {
 		return nil, nil, false, nil
 	}
@@ -41,13 +41,13 @@ func Select(
 
 func fallbackSelection(
 	data *types.AttestationData,
-	proof *types.AggregatedSignatureProof,
+	proof *types.SingleMessageAggregate,
 	err error,
-) (*types.AggregatedAttestation, *types.AggregatedSignatureProof, bool, error) {
+) (*types.AggregatedAttestation, *types.SingleMessageAggregate, bool, error) {
 	return attestationForProof(data, proof), copyProof(proof), true, err
 }
 
-func selectProofs(proofs []*types.AggregatedSignatureProof) []*types.AggregatedSignatureProof {
+func selectProofs(proofs []*types.SingleMessageAggregate) []*types.SingleMessageAggregate {
 	proofs = usableProofs(proofs)
 	covered := make(map[uint64]bool)
 	remaining := make([]bool, len(proofs))
@@ -55,7 +55,7 @@ func selectProofs(proofs []*types.AggregatedSignatureProof) []*types.AggregatedS
 		remaining[i] = true
 	}
 
-	var selected []*types.AggregatedSignatureProof
+	var selected []*types.SingleMessageAggregate
 	for {
 		bestIdx := -1
 		bestNew := 0
@@ -85,8 +85,8 @@ func selectProofs(proofs []*types.AggregatedSignatureProof) []*types.AggregatedS
 	return selected
 }
 
-func usableProofs(proofs []*types.AggregatedSignatureProof) []*types.AggregatedSignatureProof {
-	usable := make([]*types.AggregatedSignatureProof, 0, len(proofs))
+func usableProofs(proofs []*types.SingleMessageAggregate) []*types.SingleMessageAggregate {
+	usable := make([]*types.SingleMessageAggregate, 0, len(proofs))
 	for _, proof := range proofs {
 		if validProof(proof) {
 			usable = append(usable, proof)
@@ -95,7 +95,7 @@ func usableProofs(proofs []*types.AggregatedSignatureProof) []*types.AggregatedS
 	return usable
 }
 
-func attestationForProof(data *types.AttestationData, proof *types.AggregatedSignatureProof) *types.AggregatedAttestation {
+func attestationForProof(data *types.AttestationData, proof *types.SingleMessageAggregate) *types.AggregatedAttestation {
 	return &types.AggregatedAttestation{
 		AggregationBits: copyBytes(proof.Participants),
 		Data:            copyAttestationData(data),

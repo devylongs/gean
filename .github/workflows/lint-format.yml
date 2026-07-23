@@ -5,8 +5,8 @@ on:
     branches: [main]
 
 env:
-  GO_VERSION: "1.25.9"
-  RUST_VERSION: "1.88"
+  GO_VERSION: "1.25.12"
+  RUST_VERSION: "1.92"
 
 jobs:
   go-lint:
@@ -68,11 +68,11 @@ jobs:
       - name: Check Rust formatting
         working-directory: xmss/rust
         run: |
-          rustup component add --toolchain 1.90.0-x86_64-unknown-linux-gnu rustfmt
+          rustup component add --toolchain 1.92.0-x86_64-unknown-linux-gnu rustfmt
           cargo fmt --check
 
       - name: Run Clippy
         working-directory: xmss/rust
         run: |
-          rustup component add --toolchain 1.90.0-x86_64-unknown-linux-gnu clippy
+          rustup component add --toolchain 1.92.0-x86_64-unknown-linux-gnu clippy
           cargo clippy -- -D warnings -A clippy::missing_safety_doc

@@ -21,13 +21,11 @@ import (
 type sigFixture map[string]sigTest
 
 type sigTest struct {
-	Network     string   `json:"network"`
-	LeanEnv     string   `json:"leanEnv"`
-	AnchorState sigState `json:"anchorState"`
-	SignedBlock sigSBA   `json:"signedBlock"`
-	// Legacy devnet-3 field (fallback).
-	SignedBlockWithAttestation sigSBA  `json:"signedBlockWithAttestation"`
-	ExpectException            *string `json:"expectException"`
+	Network         string   `json:"network"`
+	LeanEnv         string   `json:"leanEnv"`
+	AnchorState     sigState `json:"anchorState"`
+	SignedBlock     sigSBA   `json:"signedBlock"`
+	RejectionReason *string  `json:"rejectionReason"`
 }
 
 type sigState struct {
@@ -44,37 +42,14 @@ type sigState struct {
 }
 
 type sigSBA struct {
-	// Devnet-4 flat structure: block + signature directly.
-	Block     fcBlock      `json:"block"`
-	Signature sigSignature `json:"signature"`
-	// Legacy devnet-3 wrapper (fallback).
-	Message *sigMessage `json:"message,omitempty"`
+	Block fcBlock  `json:"block"`
+	Proof sigProof `json:"proof"`
 }
 
-type sigMessage struct {
-	Block fcBlock `json:"block"`
-}
-
-type sigSignature struct {
-	ProposerSignature     string        `json:"proposerSignature"`
-	AttestationSignatures sigAttSigList `json:"attestationSignatures"`
-}
-
-type sigAttSigList struct {
-	Data []sigAttSigProof `json:"data"`
-}
-
-type sigAttSigProof struct {
-	Participants sigBoolList  `json:"participants"`
-	ProofData    sigProofData `json:"proofData"`
-}
-
-type sigBoolList struct {
-	Data []json.RawMessage `json:"data"`
-}
-
-type sigProofData struct {
-	Data string `json:"data"`
+// MultiMessageAggregate serializes as {"proof": {"data": "0x..."}} — its proof
+// field is a ByteList nested one level deeper than a bare ByteList.
+type sigProof struct {
+	Proof fcProofData `json:"proof"`
 }
 
 // toState converts fixture anchor state to types.State.
@@ -149,33 +124,9 @@ func (fs *sigState) toState() *types.State {
 
 // toSignedBlock converts fixture signed block to types.SignedBlock.
 func (sba *sigSBA) toSignedBlock() *types.SignedBlock {
-	// Devnet-4: block is directly on sba. Legacy: block is in sba.Message.
-	var srcBlock fcBlock
-	if sba.Block.Slot > 0 || sba.Block.ParentRoot != "" {
-		srcBlock = sba.Block
-	} else if sba.Message != nil {
-		srcBlock = sba.Message.Block
-	}
-	block := srcBlock.toBlock()
-
-	proposerSig := parseHexSignature(sba.Signature.ProposerSignature)
-
-	var attSigs []*types.AggregatedSignatureProof
-	for _, proof := range sba.Signature.AttestationSignatures.Data {
-		participants := parseBoolBitlist(proof.Participants.Data)
-		proofData := parseHexBytes(proof.ProofData.Data)
-		attSigs = append(attSigs, &types.AggregatedSignatureProof{
-			Participants: participants,
-			ProofData:    proofData,
-		})
-	}
-
 	return &types.SignedBlock{
-		Block: block,
-		Signature: &types.BlockSignatures{
-			ProposerSignature:     proposerSig,
-			AttestationSignatures: attSigs,
-		},
+		Block: sba.Block.toBlock(),
+		Proof: &types.MultiMessageAggregate{Proof: parseHexBytes(sba.Proof.Proof.Data)},
 	}
 }
 
@@ -263,22 +214,24 @@ func runSignatureTest(t *testing.T, tt *sigTest) {
 	s.SetLatestJustified(&types.Checkpoint{Root: anchorRoot, Slot: header.Slot})
 	s.SetLatestFinalized(&types.Checkpoint{Root: anchorRoot, Slot: header.Slot})
 
-	// 4. Convert fixture signed block.
-	sba := tt.SignedBlock
-	if sba.Block.Slot == 0 && sba.Block.ParentRoot == "" {
-		sba = tt.SignedBlockWithAttestation // legacy fallback
+	signedBlock := tt.SignedBlock.toSignedBlock()
+
+	// Place the store clock at the block's slot, as the live node does before
+	// importing an on-time block; otherwise the future-horizon guard would reject a
+	// block whose slot leads the default-zero clock.
+	if signedBlock != nil && signedBlock.Block != nil {
+		s.SetTime(signedBlock.Block.Slot * types.IntervalsPerSlot)
 	}
-	signedBlock := sba.toSignedBlock()
 
 	// 5. Call OnBlock WITH signature verification.
 	err = blockprocessor.OnBlock(s, signedBlock)
 
 	// 6. Check result against expectation.
-	expectFailure := tt.ExpectException != nil
+	expectFailure := tt.RejectionReason != nil
 
 	if expectFailure {
 		if err == nil {
-			t.Fatalf("expected failure (expectException=%q) but OnBlock succeeded", *tt.ExpectException)
+			t.Fatalf("expected failure (%q) but OnBlock succeeded", *tt.RejectionReason)
 		}
 	} else {
 		if err != nil {

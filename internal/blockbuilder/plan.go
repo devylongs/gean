@@ -8,7 +8,7 @@ import (
 
 type planResult struct {
 	attestations  []*types.AggregatedAttestation
-	proofs        []*types.AggregatedSignatureProof
+	proofs        []*types.SingleMessageAggregate
 	postState     *types.State
 	payloadErrors []PayloadError
 }
@@ -23,7 +23,7 @@ type planner struct {
 	payloads      []AttestationPayload
 	processed     map[[32]byte]bool
 	attestations  []*types.AggregatedAttestation
-	proofs        []*types.AggregatedSignatureProof
+	proofs        []*types.SingleMessageAggregate
 	state         *types.State
 	progress      progressSnapshot
 	payloadErrors []PayloadError

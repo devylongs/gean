@@ -43,6 +43,10 @@ func (kp *ValidatorKeyPair) PublicKeyPtr() *C.PublicKey {
 	return C.hashsig_keypair_get_public_key(kp.handle)
 }
 
+func (kp *ValidatorKeyPair) PublicKey() CPubKey {
+	return unsafe.Pointer(kp.PublicKeyPtr())
+}
+
 func (kp *ValidatorKeyPair) PrivateKeyPtr() *C.PrivateKey {
 	if kp == nil || kp.handle == nil {
 		return nil

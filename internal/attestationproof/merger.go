@@ -21,17 +21,17 @@ func NewMerger(cache *xmss.PubKeyCache) *Merger {
 
 type MergeProvider interface {
 	Merge(
-		proofs []*types.AggregatedSignatureProof,
+		proofs []*types.SingleMessageAggregate,
 		attData *types.AttestationData,
 		state *types.State,
-	) (*types.AggregatedSignatureProof, error)
+	) (*types.SingleMessageAggregate, error)
 }
 
 func (m *Merger) Merge(
-	proofs []*types.AggregatedSignatureProof,
+	proofs []*types.SingleMessageAggregate,
 	attData *types.AttestationData,
 	state *types.State,
-) (*types.AggregatedSignatureProof, error) {
+) (*types.SingleMessageAggregate, error) {
 	if len(proofs) < 2 {
 		return nil, fmt.Errorf("%w: fewer than two proofs", ErrMergeUnavailable)
 	}
@@ -87,8 +87,8 @@ func (m *Merger) Merge(
 			return nil, fmt.Errorf("%w: child proof has no known participants", ErrMergeUnavailable)
 		}
 		children = append(children, xmss.ChildProof{
-			Pubkeys:   pubkeys,
-			ProofData: copyBytes(proof.ProofData),
+			Pubkeys: pubkeys,
+			Proof:   copyBytes(proof.Proof),
 		})
 	}
 
@@ -105,14 +105,14 @@ func (m *Merger) Merge(
 		return nil, fmt.Errorf("aggregate child proofs: %w", err)
 	}
 
-	return &types.AggregatedSignatureProof{
+	return &types.SingleMessageAggregate{
 		Participants: types.BitlistFromIndices(allIDs),
-		ProofData:    mergedBytes,
+		Proof:        mergedBytes,
 	}, nil
 }
 
-func validProof(proof *types.AggregatedSignatureProof) bool {
+func validProof(proof *types.SingleMessageAggregate) bool {
 	return proof != nil &&
-		len(proof.ProofData) > 0 &&
+		len(proof.Proof) > 0 &&
 		types.BitlistCount(proof.Participants) > 0
 }

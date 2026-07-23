@@ -23,24 +23,26 @@ type slotClockFixtureOuter map[string]slotClockFixture
 type slotClockFixture struct {
 	Network   string                 `json:"network"`
 	LeanEnv   string                 `json:"leanEnv"`
-	Operation string                 `json:"operation"`
-	Input     slotClockInput         `json:"input"`
+	Operation slotClockOperation     `json:"operation"`
+	Config    slotClockConfig        `json:"config"`
 	Output    slotClockOutput        `json:"output"`
 	Info      map[string]interface{} `json:"_info"`
 }
 
-type slotClockInput struct {
-	GenesisTime   uint64 `json:"genesisTime"`
-	CurrentTimeMs uint64 `json:"currentTimeMs"`
-	UnixSeconds   uint64 `json:"unixSeconds"`
-	Slot          uint64 `json:"slot"`
+// operation carries the derivation kind and its inputs inline. The spec emits
+// the numeric inputs as JSON floats, so they are parsed as floats and truncated.
+type slotClockOperation struct {
+	Kind                    string  `json:"kind"`
+	GenesisTime             float64 `json:"genesisTime"`
+	CurrentTimeMilliseconds float64 `json:"currentTimeMilliseconds"`
+	UnixSeconds             float64 `json:"unixSeconds"`
+	Slot                    float64 `json:"slot"`
 }
 
 type slotClockOutput struct {
-	Config         slotClockConfig `json:"config"`
-	Slot           uint64          `json:"slot"`
-	Interval       uint64          `json:"interval"`
-	TotalIntervals uint64          `json:"totalIntervals"`
+	Slot           uint64 `json:"slot"`
+	Interval       uint64 `json:"interval"`
+	TotalIntervals uint64 `json:"totalIntervals"`
 }
 
 type slotClockConfig struct {
@@ -82,41 +84,41 @@ func TestSpecSlotClock(t *testing.T) {
 		for _, fx := range outer {
 			fx := fx
 			t.Run(base, func(t *testing.T) {
-				assertConstantsMatch(t, fx.Output.Config)
+				assertConstantsMatch(t, fx.Config)
 
-				switch fx.Operation {
+				op := fx.Operation
+				gt := uint64(op.GenesisTime)
+				nowMs := uint64(op.CurrentTimeMilliseconds)
+				unix := uint64(op.UnixSeconds)
+				slot := uint64(op.Slot)
+				switch op.Kind {
 				case "current_slot":
-					got := types.CurrentSlot(fx.Input.GenesisTime, fx.Input.CurrentTimeMs)
+					got := types.CurrentSlot(gt, nowMs)
 					if got != fx.Output.Slot {
-						t.Errorf("CurrentSlot(gt=%d, now=%d) = %d, want %d",
-							fx.Input.GenesisTime, fx.Input.CurrentTimeMs, got, fx.Output.Slot)
+						t.Errorf("CurrentSlot(gt=%d, now=%d) = %d, want %d", gt, nowMs, got, fx.Output.Slot)
 					}
 				case "current_interval":
-					got := types.CurrentInterval(fx.Input.GenesisTime, fx.Input.CurrentTimeMs)
+					got := types.CurrentInterval(gt, nowMs)
 					if got != fx.Output.Interval {
-						t.Errorf("CurrentInterval(gt=%d, now=%d) = %d, want %d",
-							fx.Input.GenesisTime, fx.Input.CurrentTimeMs, got, fx.Output.Interval)
+						t.Errorf("CurrentInterval(gt=%d, now=%d) = %d, want %d", gt, nowMs, got, fx.Output.Interval)
 					}
 				case "total_intervals":
-					got := types.TotalIntervals(fx.Input.GenesisTime, fx.Input.CurrentTimeMs)
+					got := types.TotalIntervals(gt, nowMs)
 					if got != fx.Output.TotalIntervals {
-						t.Errorf("TotalIntervals(gt=%d, now=%d) = %d, want %d",
-							fx.Input.GenesisTime, fx.Input.CurrentTimeMs, got, fx.Output.TotalIntervals)
+						t.Errorf("TotalIntervals(gt=%d, now=%d) = %d, want %d", gt, nowMs, got, fx.Output.TotalIntervals)
 					}
 				case "from_slot":
-					got := types.IntervalsFromSlot(fx.Input.Slot)
+					got := types.IntervalsFromSlot(slot)
 					if got != fx.Output.Interval {
-						t.Errorf("IntervalsFromSlot(%d) = %d, want %d",
-							fx.Input.Slot, got, fx.Output.Interval)
+						t.Errorf("IntervalsFromSlot(%d) = %d, want %d", slot, got, fx.Output.Interval)
 					}
 				case "from_unix_time":
-					got := types.IntervalsFromUnixTime(fx.Input.UnixSeconds, fx.Input.GenesisTime)
+					got := types.IntervalsFromUnixTime(unix, gt)
 					if got != fx.Output.Interval {
-						t.Errorf("IntervalsFromUnixTime(unix=%d, gt=%d) = %d, want %d",
-							fx.Input.UnixSeconds, fx.Input.GenesisTime, got, fx.Output.Interval)
+						t.Errorf("IntervalsFromUnixTime(unix=%d, gt=%d) = %d, want %d", unix, gt, got, fx.Output.Interval)
 					}
 				default:
-					t.Skipf("unsupported slot_clock operation %q", fx.Operation)
+					t.Skipf("unsupported slot_clock operation %q", op.Kind)
 				}
 			})
 		}

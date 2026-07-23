@@ -83,36 +83,14 @@ func copyRoot(root [32]byte) []byte {
 	return out
 }
 
-func TestBuildBlockRejectsUnclosedDivergence(t *testing.T) {
+func TestBuildBlockSucceedsWithNoPayloads(t *testing.T) {
 	headState, parentRoot := minimalHeadState(t)
-	storeJustified := &types.Checkpoint{Root: [32]byte{0x99}, Slot: 5}
 
 	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              1,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		RequiredJustified: storeJustified,
-	})
-
-	if result != nil {
-		t.Fatalf("expected nil result, got %v", result)
-	}
-	if !errors.Is(err, ErrJustifiedDivergenceNotClosed) {
-		t.Fatalf("expected ErrJustifiedDivergenceNotClosed, got %v", err)
-	}
-}
-
-func TestBuildBlockSucceedsWhenStateAndStoreAgree(t *testing.T) {
-	headState, parentRoot := minimalHeadState(t)
-	storeJustified := &types.Checkpoint{Slot: 0, Root: parentRoot}
-
-	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              1,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		RequiredJustified: storeJustified,
+		HeadState:     headState,
+		Slot:          1,
+		ProposerIndex: 0,
+		ParentRoot:    parentRoot,
 	})
 
 	if err != nil {
@@ -131,10 +109,9 @@ func TestBuildBlockSucceedsWhenStateAndStoreAgree(t *testing.T) {
 
 func TestBuildBlockRejectsMalformedHeadState(t *testing.T) {
 	_, err := Build(Input{
-		HeadState:         &types.State{},
-		Slot:              1,
-		ProposerIndex:     0,
-		RequiredJustified: &types.Checkpoint{},
+		HeadState:     &types.State{},
+		Slot:          1,
+		ProposerIndex: 0,
 	})
 	if err == nil {
 		t.Fatal("expected malformed head state error")
@@ -148,15 +125,14 @@ func TestBuildBlockRejectsPayloadsWithoutKnownRoots(t *testing.T) {
 	headState, parentRoot, data, dataRoot := postHeaderVoteInput(t)
 
 	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              3,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		RequiredJustified: headState.LatestJustified,
+		HeadState:     headState,
+		Slot:          3,
+		ProposerIndex: 0,
+		ParentRoot:    parentRoot,
 		Payloads: []AttestationPayload{{
 			DataRoot: dataRoot,
 			Data:     data,
-			Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{0})},
+			Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 		}},
 	})
 
@@ -173,11 +149,10 @@ func TestBuildBlockReturnsTransitionError(t *testing.T) {
 	headState.Validators = []*types.Validator{{}, {}}
 
 	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              1,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		RequiredJustified: headState.LatestJustified,
+		HeadState:     headState,
+		Slot:          1,
+		ProposerIndex: 0,
+		ParentRoot:    parentRoot,
 	})
 
 	if result != nil {
@@ -186,44 +161,6 @@ func TestBuildBlockReturnsTransitionError(t *testing.T) {
 	var proposerErr *statetransition.InvalidProposerError
 	if !errors.As(err, &proposerErr) {
 		t.Fatalf("error=%v, want InvalidProposerError", err)
-	}
-}
-
-func TestBuildBlockRejectsSameSlotJustifiedRootMismatch(t *testing.T) {
-	headState, parentRoot := minimalHeadState(t)
-
-	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              1,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		RequiredJustified: &types.Checkpoint{Slot: 0, Root: [32]byte{0xaa}},
-	})
-
-	if result != nil {
-		t.Fatalf("expected nil result, got %v", result)
-	}
-	if !errors.Is(err, ErrJustifiedDivergenceNotClosed) {
-		t.Fatalf("expected ErrJustifiedDivergenceNotClosed, got %v", err)
-	}
-}
-
-func TestBuildBlockRejectsAheadJustifiedMissingRequiredRoot(t *testing.T) {
-	headState, parentRoot, _, _ := postHeaderVoteInput(t)
-
-	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              3,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		RequiredJustified: &types.Checkpoint{Slot: 0, Root: [32]byte{0xaa}},
-	})
-
-	if result != nil {
-		t.Fatalf("expected nil result, got %v", result)
-	}
-	if !errors.Is(err, ErrJustifiedDivergenceNotClosed) {
-		t.Fatalf("expected ErrJustifiedDivergenceNotClosed, got %v", err)
 	}
 }
 
@@ -237,16 +174,15 @@ func TestBuildBlockReportsMismatchedPayloadRoot(t *testing.T) {
 	}
 
 	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              1,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		KnownBlockRoots:   map[[32]byte]bool{parentRoot: true},
-		RequiredJustified: &types.Checkpoint{Slot: 0, Root: parentRoot},
+		HeadState:       headState,
+		Slot:            1,
+		ProposerIndex:   0,
+		ParentRoot:      parentRoot,
+		KnownBlockRoots: map[[32]byte]bool{parentRoot: true},
 		Payloads: []AttestationPayload{{
 			DataRoot: [32]byte{0xee},
 			Data:     data,
-			Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{0})},
+			Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 		}},
 	})
 	if err != nil {
@@ -268,24 +204,25 @@ func TestBuildBlockReportsMismatchedPayloadRoot(t *testing.T) {
 
 func TestBuildBlockReportsSkippedPayloadIssues(t *testing.T) {
 	headState, parentRoot, data, dataRoot := postHeaderVoteInput(t)
-	invalidVote := *data
-	invalidVote.Target = &types.Checkpoint{Slot: data.Source.Slot, Root: data.Source.Root}
-	invalidRoot := hashAttestationData(t, &invalidVote)
+	// Accepting data advances justification to slot 2, so this vote's slot-1
+	// source is no longer the current justified checkpoint and is skipped.
+	staleSourceVote := *data
+	staleSourceVote.Target = &types.Checkpoint{Slot: data.Source.Slot, Root: data.Source.Root}
+	staleRoot := hashAttestationData(t, &staleSourceVote)
 	unknownHead := *data
 	unknownHead.Head = &types.Checkpoint{Slot: data.Head.Slot, Root: [32]byte{0xbb}}
 	unknownRoot := hashAttestationData(t, &unknownHead)
 
 	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              3,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		KnownBlockRoots:   map[[32]byte]bool{parentRoot: true},
-		RequiredJustified: headState.LatestJustified,
+		HeadState:       headState,
+		Slot:            3,
+		ProposerIndex:   0,
+		ParentRoot:      parentRoot,
+		KnownBlockRoots: map[[32]byte]bool{parentRoot: true},
 		Payloads: []AttestationPayload{
-			{DataRoot: dataRoot, Data: data, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
-			{DataRoot: invalidRoot, Data: &invalidVote, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
-			{DataRoot: unknownRoot, Data: &unknownHead, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
+			{DataRoot: dataRoot, Data: data, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
+			{DataRoot: staleRoot, Data: &staleSourceVote, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
+			{DataRoot: unknownRoot, Data: &unknownHead, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
 		},
 	})
 	if err != nil {
@@ -300,13 +237,13 @@ func TestBuildBlockReportsSkippedPayloadIssues(t *testing.T) {
 	if len(result.PayloadErrors) != 2 {
 		t.Fatalf("payload errors=%d, want 2", len(result.PayloadErrors))
 	}
-	var foundInvalidVote, foundUnknownHead bool
+	var foundStaleSource, foundUnknownHead bool
 	for _, payloadErr := range result.PayloadErrors {
-		foundInvalidVote = foundInvalidVote || errors.Is(payloadErr.Err, ErrPayloadVoteInvalid)
+		foundStaleSource = foundStaleSource || errors.Is(payloadErr.Err, ErrPayloadSourceNotCurrentJustified)
 		foundUnknownHead = foundUnknownHead || errors.Is(payloadErr.Err, ErrPayloadHeadUnknown)
 	}
-	if !foundInvalidVote || !foundUnknownHead {
-		t.Fatalf("payload errors=%v, want invalid vote and unknown head", result.PayloadErrors)
+	if !foundStaleSource || !foundUnknownHead {
+		t.Fatalf("payload errors=%v, want stale source and unknown head", result.PayloadErrors)
 	}
 }
 
@@ -314,16 +251,15 @@ func TestBuildBlockRecordsProofMergeFallback(t *testing.T) {
 	headState, parentRoot, data, dataRoot := postHeaderVoteInput(t)
 
 	result, err := Build(Input{
-		HeadState:         headState,
-		Slot:              3,
-		ProposerIndex:     0,
-		ParentRoot:        parentRoot,
-		KnownBlockRoots:   map[[32]byte]bool{parentRoot: true},
-		RequiredJustified: headState.LatestJustified,
+		HeadState:       headState,
+		Slot:            3,
+		ProposerIndex:   0,
+		ParentRoot:      parentRoot,
+		KnownBlockRoots: map[[32]byte]bool{parentRoot: true},
 		Payloads: []AttestationPayload{{
 			DataRoot: dataRoot,
 			Data:     data,
-			Proofs: []*types.AggregatedSignatureProof{
+			Proofs: []*types.SingleMessageAggregate{
 				mockProof([]uint64{0}),
 				mockProof([]uint64{1}),
 			},
@@ -358,7 +294,7 @@ func TestPlanAttestationsUsesPostHeaderState(t *testing.T) {
 		Payloads: []AttestationPayload{{
 			DataRoot: dataRoot,
 			Data:     data,
-			Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{0})},
+			Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 		}},
 	})
 	if err != nil {
@@ -424,8 +360,8 @@ func TestPlanAttestationsCarriesTrialState(t *testing.T) {
 		ParentRoot:      parentRoot,
 		KnownBlockRoots: map[[32]byte]bool{root1: true, parentRoot: true},
 		Payloads: []AttestationPayload{
-			{DataRoot: firstRoot, Data: first, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
-			{DataRoot: secondRoot, Data: second, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
+			{DataRoot: firstRoot, Data: first, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
+			{DataRoot: secondRoot, Data: second, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
 		},
 	})
 	if err != nil {
@@ -453,7 +389,7 @@ func TestPlanAttestationsContinuesWhenJustifiedSlotsChange(t *testing.T) {
 		Config:                   &types.ChainConfig{GenesisTime: 1000},
 		Slot:                     6,
 		LatestBlockHeader:        &types.BlockHeader{Slot: 6},
-		LatestJustified:          &types.Checkpoint{Slot: 5, Root: roots[5]},
+		LatestJustified:          &types.Checkpoint{Slot: 0, Root: roots[0]},
 		LatestFinalized:          &types.Checkpoint{Slot: 0, Root: roots[0]},
 		JustifiedSlots:           types.NewBitlistSSZ(6),
 		JustificationsValidators: types.NewBitlistSSZ(0),
@@ -492,8 +428,8 @@ func TestPlanAttestationsContinuesWhenJustifiedSlotsChange(t *testing.T) {
 		ParentRoot:      parentRoot,
 		KnownBlockRoots: map[[32]byte]bool{roots[2]: true, parentRoot: true},
 		Payloads: []AttestationPayload{
-			{DataRoot: firstRoot, Data: first, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
-			{DataRoot: secondRoot, Data: second, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{0})}},
+			{DataRoot: firstRoot, Data: first, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
+			{DataRoot: secondRoot, Data: second, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{0})}},
 		},
 	})
 	if err != nil {
@@ -546,7 +482,7 @@ func TestPlanAttestationsDoesNotReportSkippedPayloadsWhenFull(t *testing.T) {
 		payloads = append(payloads, AttestationPayload{
 			DataRoot: hashAttestationData(t, data),
 			Data:     data,
-			Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{1})},
+			Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 		})
 	}
 	unknownHead := &types.AttestationData{
@@ -558,7 +494,7 @@ func TestPlanAttestationsDoesNotReportSkippedPayloadsWhenFull(t *testing.T) {
 	payloads = append(payloads, AttestationPayload{
 		DataRoot: hashAttestationData(t, unknownHead),
 		Data:     unknownHead,
-		Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{1})},
+		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 	})
 
 	plan, err := planAttestations(Input{

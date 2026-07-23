@@ -23,7 +23,12 @@ type AggregatedAttestation struct {
 	Data            *AttestationData `json:"data"`
 }
 
+type SingleMessageAggregate struct {
+	Participants []byte `json:"participants" ssz:"bitlist" ssz-max:"4096"`
+	Proof        []byte `json:"proof" ssz-max:"524288"`
+}
+
 type SignedAggregatedAttestation struct {
-	Data  *AttestationData          `json:"data"`
-	Proof *AggregatedSignatureProof `json:"proof"`
+	Data  *AttestationData        `json:"data"`
+	Proof *SingleMessageAggregate `json:"proof"`
 }

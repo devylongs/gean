@@ -23,13 +23,14 @@ type syncFixtureOuter map[string]syncFixture
 type syncFixture struct {
 	Network   string                 `json:"network"`
 	LeanEnv   string                 `json:"leanEnv"`
-	Operation string                 `json:"operation"`
-	Input     syncInput              `json:"input"`
+	Operation syncOperation          `json:"operation"`
 	Output    syncOutput             `json:"output"`
 	Info      map[string]interface{} `json:"_info"`
 }
 
-type syncInput struct {
+// operation carries the kind and its inputs inline (lstar fixture shape).
+type syncOperation struct {
+	Kind          string `json:"kind"`
 	NumValidators uint64 `json:"numValidators"`
 	AnchorSlot    uint64 `json:"anchorSlot"`
 }
@@ -94,8 +95,8 @@ func TestSpecSync(t *testing.T) {
 		for _, fx := range outer {
 			fx := fx
 			t.Run(base, func(t *testing.T) {
-				if fx.Operation != "verify_checkpoint" {
-					t.Skipf("unsupported sync operation %q", fx.Operation)
+				if fx.Operation.Kind != "verify_checkpoint" {
+					t.Skipf("unsupported sync operation %q", fx.Operation.Kind)
 				}
 
 				stateBytes, err := hex.DecodeString(strings.TrimPrefix(fx.Output.StateBytes, "0x"))

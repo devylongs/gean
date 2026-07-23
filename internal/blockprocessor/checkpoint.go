@@ -8,35 +8,22 @@ import (
 	"github.com/geanlabs/gean/internal/types"
 )
 
-type checkpointChanges struct {
-	entries           []storage.KV
-	finalizedAdvanced bool
-}
-
-func checkpointChangesFor(s *store.ConsensusStore, postState *types.State) (checkpointChanges, error) {
+// justifiedCheckpointChange persists the post-state justified checkpoint when it
+// advances. The finalized checkpoint is deliberately not advanced here: it is
+// re-derived from the canonical head's chain during head selection, so a losing
+// fork that finalized a higher slot cannot latch finalization above the head.
+func justifiedCheckpointChange(s *store.ConsensusStore, postState *types.State) ([]storage.KV, error) {
 	if s == nil || postState == nil {
-		return checkpointChanges{}, nil
+		return nil, nil
 	}
-	currentJustified := s.LatestJustified()
-	currentFinalized := s.LatestFinalized()
-
-	var changes checkpointChanges
-	if checkpointAdvanced(postState.LatestJustified, currentJustified) {
-		entry, err := checkpointEntry(storage.KeyLatestJustified, postState.LatestJustified)
-		if err != nil {
-			return checkpointChanges{}, err
-		}
-		changes.entries = append(changes.entries, entry)
+	if !checkpointAdvanced(postState.LatestJustified, s.LatestJustified()) {
+		return nil, nil
 	}
-	if checkpointAdvanced(postState.LatestFinalized, currentFinalized) {
-		entry, err := checkpointEntry(storage.KeyLatestFinalized, postState.LatestFinalized)
-		if err != nil {
-			return checkpointChanges{}, err
-		}
-		changes.entries = append(changes.entries, entry)
-		changes.finalizedAdvanced = true
+	entry, err := checkpointEntry(storage.KeyLatestJustified, postState.LatestJustified)
+	if err != nil {
+		return nil, err
 	}
-	return changes, nil
+	return []storage.KV{entry}, nil
 }
 
 func checkpointAdvanced(candidate, current *types.Checkpoint) bool {

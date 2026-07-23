@@ -192,3 +192,57 @@ func TestBlockBuffer_ZeroValueAndNilGuards(t *testing.T) {
 		t.Fatalf("nil pairs=%v, want nil", pairs)
 	}
 }
+
+func TestBlockBuffer_HighestSlotEntry(t *testing.T) {
+	b := NewBlockBuffer()
+
+	if _, _, ok := b.HighestSlotEntry(); ok {
+		t.Fatal("expected no entry on empty buffer")
+	}
+
+	near := [32]byte{0x01}
+	mid := [32]byte{0x02}
+	far := [32]byte{0x03}
+	b.SetSlot(near, 10)
+	b.SetSlot(mid, 50)
+	b.SetSlot(far, 90)
+
+	root, slot, ok := b.HighestSlotEntry()
+	if !ok || root != far || slot != 90 {
+		t.Fatalf("expected far entry (slot 90), got root=%x slot=%d ok=%v", root, slot, ok)
+	}
+
+	// Discarding the current maximum must promote the next-farthest entry.
+	b.DiscardSubtree(far)
+	root, slot, ok = b.HighestSlotEntry()
+	if !ok || root != mid || slot != 50 {
+		t.Fatalf("expected mid entry (slot 50) after discard, got root=%x slot=%d ok=%v", root, slot, ok)
+	}
+
+	b.ClearEntry(mid)
+	root, slot, ok = b.HighestSlotEntry()
+	if !ok || root != near || slot != 10 {
+		t.Fatalf("expected near entry (slot 10) after clear, got root=%x slot=%d ok=%v", root, slot, ok)
+	}
+}
+
+func TestBlockBuffer_DiscardSubtreeClearsSlots(t *testing.T) {
+	b := NewBlockBuffer()
+
+	parent := [32]byte{0x01}
+	child := [32]byte{0x02}
+	grandchild := [32]byte{0x03}
+
+	b.AddChild(parent, child)
+	b.SetParent(child, parent)
+	b.SetSlot(child, 5)
+	b.AddChild(child, grandchild)
+	b.SetParent(grandchild, child)
+	b.SetSlot(grandchild, 6)
+
+	b.DiscardSubtree(child)
+
+	if _, _, ok := b.HighestSlotEntry(); ok {
+		t.Fatal("expected slot tracking cleared for the whole discarded subtree")
+	}
+}

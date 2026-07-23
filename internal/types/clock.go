@@ -11,7 +11,8 @@ func CurrentSlot(genesisTime, currentTimeMs uint64) uint64 {
 	return (currentTimeMs - genesisMs) / MillisecondsPerSlot
 }
 
-func CurrentInterval(genesisTime, currentTimeMs uint64) uint64 {
+// MillisIntoSlot returns how far the clock has advanced into the current slot.
+func MillisIntoSlot(genesisTime, currentTimeMs uint64) uint64 {
 	genesisMs, ok := unixMillis(genesisTime)
 	if !ok {
 		return 0
@@ -19,8 +20,11 @@ func CurrentInterval(genesisTime, currentTimeMs uint64) uint64 {
 	if currentTimeMs < genesisMs {
 		return 0
 	}
-	msIntoSlot := (currentTimeMs - genesisMs) % MillisecondsPerSlot
-	return msIntoSlot / MillisecondsPerInterval
+	return (currentTimeMs - genesisMs) % MillisecondsPerSlot
+}
+
+func CurrentInterval(genesisTime, currentTimeMs uint64) uint64 {
+	return MillisIntoSlot(genesisTime, currentTimeMs) / MillisecondsPerInterval
 }
 
 func TotalIntervals(genesisTime, currentTimeMs uint64) uint64 {

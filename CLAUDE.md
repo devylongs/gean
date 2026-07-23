@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`gean` is a Go implementation of an Ethereum **lean consensus** client (module `github.com/geanlabs/gean`). It targets the **devnet-4** milestone and tracks the `leanEthereum/leanSpec` Python spec. Consensus uses **XMSS post-quantum hash-based signatures**, implemented in Rust and reached over CGo FFI.
+`gean` is a Go implementation of an Ethereum **lean consensus** client (module `github.com/geanlabs/gean`). It targets the **devnet-5** milestone and tracks the `leanEthereum/leanSpec` Python spec. Consensus uses **XMSS post-quantum hash-based signatures**, implemented in Rust and reached over CGo FFI.
 
 ## Build & test
 
-The build has a hard ordering: **Rust FFI must be built before any Go code that touches `xmss`**. `make build` does this for you (`ffi` is a prerequisite). The toolchain is pinned — Rust 1.90.0, Go 1.25.
+The build has a hard ordering: **Rust FFI must be built before any Go code that touches `xmss`**. `make build` does this for you (`ffi` is a prerequisite). The toolchain is pinned — Rust 1.92.0, Go 1.25.
 
 ```
 make build        # builds Rust FFI glue, then bin/gean and bin/keygen
@@ -31,8 +31,7 @@ Hive test-driver routes are excluded from normal binaries. Build with `go build 
 ### Spec fixtures
 Spec tests depend on a separately-cloned, **pinned** spec repo (not vendored):
 ```
-make leanSpec            # clones leanEthereum/leanSpec at LEAN_SPEC_COMMIT_HASH (see Makefile)
-make leanSpec/fixtures   # generates fixtures via `uv run fill` (needs uv/Python)
+make test-spec           # pins leanSpec, downloads prod keys, generates fixtures, and runs them
 ```
 When catching up to spec changes, the pinned `LEAN_SPEC_COMMIT_HASH` in the Makefile is the source of truth for "what spec version are we on."
 
@@ -53,8 +52,10 @@ A slot is **4s**, divided into **5 intervals of 800ms** (`internal/types/constan
 Behavior is matched against the spec's `get_proposal_head` / `accept_new_attestations` ordering — preserve the order of head-update vs. proposal in `onTick`.
 
 ### Engine (`internal/node/`) — the coordination core
-`Engine` (`internal/node/engine.go`) owns runtime wiring and is single-threaded over a `select` loop in `Run`: it multiplexes the ticker, `BlockCh`, `AggregationCh`, and `FailedRootCh`. P2P runs on its own goroutine and feeds these channels. Two things run **off** the tick loop to avoid blocking it:
+`Engine` (`internal/node/engine.go`) owns runtime wiring and is single-threaded over a `select` loop in `Run`: it multiplexes the ticker, `BlockCh`, `AggregationCh`, and `FailedRootCh`. P2P runs on its own goroutine and feeds these channels. Expensive proof work runs **off** the tick loop:
 - **Aggregation worker** (`aggregation.RunWorker`, `internal/aggregation/worker.go`) — XMSS aggregation is slow FFI work, dispatched via a capacity-1 channel; backlog is dropped on purpose (best-effort per slot).
+- **Proposal worker** — builds the Type-2 block proof without blocking ticks.
+- **Recovery worker** — splits block Type-2 proofs back into pending Type-1 proofs.
 - **Attestation verification** — each gossip attestation gets its own goroutine (~500ms XMSS verify each); `AttestationSignatureMap` is mutex-protected.
 
 `Engine` holds sibling components — `store.ConsensusStore`, `ForkChoice`, `p2p.Host`, `xmss.KeyManager`, `role.Controller`, `dutygate.Gate`, and the `pending.BlockBuffer`/`pending.AttestationBuffer` out-of-order buffers — and wires metrics/p2p hooks at `Run` startup. **`ForkChoice` does NOT live inside `ConsensusStore`** — the Engine calls fork choice with store data as parameters.
@@ -88,4 +89,4 @@ libp2p over QUIC. Gossipsub topics (`topics.go`, `gossip.go`), req/resp protocol
 
 - **Spec is the source of truth.** Consensus behavior must track `leanSpec` (pinned at `LEAN_SPEC_COMMIT_HASH` in the Makefile). When changing consensus logic, consult the spec rather than inferring intent from existing code. The `spec-compliant` skill checks gean against spec changes since a devnet version.
 - `gitCommit` is injected at link time via `-ldflags` and surfaced through the `lean_node_info` Prometheus gauge — don't hardcode it.
-- Buffer caps / limits are package-level consts sized for devnet-4 (low validator counts); they're documented as "promote to flags if a deployment needs different ceilings."
+- Buffer caps and consensus limits are package-level constants aligned with the pinned spec.

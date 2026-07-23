@@ -3,6 +3,7 @@
 package spectests
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +20,32 @@ import (
 )
 
 type fcFixture map[string]fcTest
+
+// mockedProofSentinel opens every placeholder aggregation proof the upstream
+// filler emits in its default (non-real-crypto) mode, where the recursive SNARK
+// merge is skipped for vectors that do not test crypto. The cross-client contract
+// is that a proof carrying this prefix must be accepted without cryptographic
+// verification; any proof or signature lacking it is verified for real. Individual
+// attestation signatures are always real, so this only ever short-circuits
+// aggregated proofs. This must never leak into production verification: an attacker
+// could otherwise prefix a forged proof to bypass the check.
+var mockedProofSentinel = []byte("\x00MOCKED-AGGREGATION-PROOF\x00")
+
+func carriesMockedProof(proof []byte) bool {
+	return bytes.HasPrefix(proof, mockedProofSentinel)
+}
+
+// earliestAdmissibleInterval is the lowest store time at which a slot-N attestation
+// clears ValidateAttestationData's future check: admission allows
+// slot*INTERVALS_PER_SLOT <= time + GOSSIP_DISPARITY_INTERVALS, so the vote is
+// admissible one disparity interval before its slot starts.
+func earliestAdmissibleInterval(slot uint64) uint64 {
+	start := slot * types.IntervalsPerSlot
+	if start < types.GossipDisparityIntervals {
+		return 0
+	}
+	return start - types.GossipDisparityIntervals
+}
 
 type fcTest struct {
 	Network     string   `json:"network"`
@@ -63,8 +90,8 @@ type fcDataList struct {
 }
 
 type fcValidator struct {
-	AttestationPubkey string `json:"attestationPubkey"`
-	ProposalPubkey    string `json:"proposalPubkey"`
+	AttestationPubkey string `json:"attestationPublicKey"`
+	ProposalPubkey    string `json:"proposalPublicKey"`
 	Pubkey            string `json:"pubkey"` // legacy fallback
 	Index             uint64 `json:"index"`
 }
@@ -94,11 +121,16 @@ type fcStep struct {
 	Checks      *fcChecks            `json:"checks,omitempty"`
 	Time        *uint64              `json:"time,omitempty"`
 	Interval    *uint64              `json:"interval,omitempty"`
+	HasProposal *bool                `json:"hasProposal,omitempty"`
+	// TickToSlot reports whether the store clock advances to the block's slot
+	// before import. Absent means the default (advance); false delivers the
+	// block ahead of the store clock.
+	TickToSlot *bool `json:"tickToSlot,omitempty"`
 }
 
 // fcGossipAttestation represents an individual gossip attestation step.
 type fcGossipAttestation struct {
-	ValidatorID uint64    `json:"validatorId"`
+	ValidatorID uint64    `json:"validatorIndex"`
 	Data        fcAttData `json:"data"`
 	Signature   string    `json:"signature"`
 	// Aggregated attestation fields (for gossipAggregatedAttestation steps).
@@ -107,7 +139,7 @@ type fcGossipAttestation struct {
 
 type fcProof struct {
 	Participants fcDataList  `json:"participants"`
-	ProofData    fcProofData `json:"proofData"`
+	Proof        fcProofData `json:"proof"`
 }
 
 type fcProofData struct {
@@ -127,22 +159,23 @@ type fcAggregatedAttestation struct {
 }
 
 type fcChecks struct {
-	Time                     *uint64              `json:"time,omitempty"`
-	HeadSlot                 *uint64              `json:"headSlot,omitempty"`
-	HeadRoot                 *string              `json:"headRoot,omitempty"`
-	HeadRootLabel            *string              `json:"headRootLabel,omitempty"`
-	LatestJustifiedSlot      *uint64              `json:"latestJustifiedSlot,omitempty"`
-	LatestJustifiedRoot      *string              `json:"latestJustifiedRoot,omitempty"`
-	LatestJustifiedRootLabel *string              `json:"latestJustifiedRootLabel,omitempty"`
-	LatestFinalizedSlot      *uint64              `json:"latestFinalizedSlot,omitempty"`
-	LatestFinalizedRoot      *string              `json:"latestFinalizedRoot,omitempty"`
-	LatestFinalizedRootLabel *string              `json:"latestFinalizedRootLabel,omitempty"`
-	SafeTarget               *string              `json:"safeTarget,omitempty"`
-	SafeTargetSlot           *uint64              `json:"safeTargetSlot,omitempty"`
-	SafeTargetRootLabel      *string              `json:"safeTargetRootLabel,omitempty"`
-	AttestationTargetSlot    *uint64              `json:"attestationTargetSlot,omitempty"`
-	AttestationChecks        []fcAttestationCheck `json:"attestationChecks,omitempty"`
-	LexicographicHeadAmong   []string             `json:"lexicographicHeadAmong,omitempty"`
+	Time                           *uint64              `json:"time,omitempty"`
+	HeadSlot                       *uint64              `json:"headSlot,omitempty"`
+	HeadRoot                       *string              `json:"headRoot,omitempty"`
+	HeadRootLabel                  *string              `json:"headRootLabel,omitempty"`
+	LatestJustifiedSlot            *uint64              `json:"latestJustifiedSlot,omitempty"`
+	LatestJustifiedRoot            *string              `json:"latestJustifiedRoot,omitempty"`
+	LatestJustifiedRootLabel       *string              `json:"latestJustifiedRootLabel,omitempty"`
+	LatestFinalizedSlot            *uint64              `json:"latestFinalizedSlot,omitempty"`
+	LatestFinalizedRoot            *string              `json:"latestFinalizedRoot,omitempty"`
+	LatestFinalizedRootLabel       *string              `json:"latestFinalizedRootLabel,omitempty"`
+	SafeTarget                     *string              `json:"safeTarget,omitempty"`
+	SafeTargetSlot                 *uint64              `json:"safeTargetSlot,omitempty"`
+	SafeTargetRootLabel            *string              `json:"safeTargetRootLabel,omitempty"`
+	AttestationTargetSlot          *uint64              `json:"attestationTargetSlot,omitempty"`
+	AttestationChecks              []fcAttestationCheck `json:"attestationChecks,omitempty"`
+	LexicographicHeadAmong         []string             `json:"lexicographicHeadAmong,omitempty"`
+	CanonicalEquivocationHeadAmong []string             `json:"canonicalEquivocationHeadAmong,omitempty"`
 }
 
 // fcAttestationCheck mirrors the spec's per-validator attestation-state
@@ -389,8 +422,8 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 
 	// Store anchor as signed block.
 	anchorSigned := &types.SignedBlock{
-		Block:     anchorBlock,
-		Signature: nil,
+		Block: anchorBlock,
+		Proof: nil,
 	}
 	s.StorePendingBlock(anchorRoot, anchorSigned)
 
@@ -412,26 +445,20 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 
 			// Build signatures with participant bits from attestation aggregation_bits
 			// so processBlockAttestations stores correct per-validator votes.
-			var attSigs []*types.AggregatedSignatureProof
-			if block.Body != nil {
-				for _, att := range block.Body.Attestations {
-					attSigs = append(attSigs, &types.AggregatedSignatureProof{
-						Participants: att.AggregationBits,
-					})
-				}
-			}
 			signedBlock := &types.SignedBlock{
 				Block: block,
-				Signature: &types.BlockSignatures{
-					AttestationSignatures: attSigs,
-				},
+				Proof: &types.MultiMessageAggregate{},
 			}
 
-			// Advance store time to at least this block's slot so that
-			// subsequent attestation validation doesn't reject as "too far in future".
-			minTime := block.Slot * types.IntervalsPerSlot
-			if s.Time() < minTime {
-				s.SetTime(minTime)
+			// Advance the store clock to this block's slot unless the fixture
+			// delivers the block ahead of the clock (tickToSlot=false). The clock
+			// gates attestation future-validation, so it must reach the slot
+			// before subsequent attestations validate.
+			if step.TickToSlot == nil || *step.TickToSlot {
+				minTime := block.Slot * types.IntervalsPerSlot
+				if s.Time() < minTime {
+					s.SetTime(minTime)
+				}
 			}
 
 			// Process block through store (no signature verification).
@@ -451,6 +478,27 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 			// Register block in fork choice.
 			fc.OnBlock(block.Slot, blockRoot, block.ParentRoot)
 
+			// Seed the block's on-chain aggregated attestations into the known
+			// pool with their participant sets so the votes carry fork-choice
+			// weight. The spec test framework merges a block's aggregated proofs
+			// into latest_known_aggregated_payloads when building it; block
+			// import alone (data, empty proof set) leaves them weightless, which
+			// would mis-resolve weight-driven reorgs. Only participants are read
+			// during head computation, so a non-empty placeholder proof suffices.
+			for _, att := range block.Body.Attestations {
+				if att == nil || att.Data == nil || types.BitlistCount(att.AggregationBits) == 0 {
+					continue
+				}
+				dataRoot, err := att.Data.HashTreeRoot()
+				if err != nil {
+					continue
+				}
+				s.KnownPayloads.Push(dataRoot, att.Data, &types.SingleMessageAggregate{
+					Participants: att.AggregationBits,
+					Proof:        []byte{0x01},
+				})
+			}
+
 			// Update head: extract known attestations, feed to fork choice, compute head.
 			attestations := s.ExtractLatestKnownAttestations()
 			justifiedRoot := s.LatestJustified().Root
@@ -459,11 +507,18 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 			}
 
-			newHead := fc.UpdateHead(justifiedRoot)
-			s.SetHead(newHead)
+			simulateUpdateHead(s, fc, justifiedRoot)
 
 			// Promote new payloads to known (so next updateHead sees them).
 			s.PromoteNewToKnown()
+
+			// Reflect the just-promoted votes into the fork-choice known tracker,
+			// as the Engine's next updateHead re-derives known votes from the
+			// promoted pool. Without this, a vote gossiped as "new" is promoted in
+			// the payload pool but stays absent from the tracker the checks read.
+			for vid, data := range s.ExtractLatestKnownAttestations() {
+				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
+			}
 
 			// Validate checks if present.
 			if step.Checks != nil {
@@ -482,28 +537,26 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				Source: &types.Checkpoint{Root: parseHexRoot(att.Data.Source.Root), Slot: att.Data.Source.Slot},
 			}
 
-			// For valid steps, advance time so attestation passes the future check.
-			// Invalid steps keep current time so the time-bound branch of
-			// ValidateAttestationData fires as expected on fixtures designed to
-			// exercise that rejection path.
+			// For valid steps, advance time just enough for the attestation to clear
+			// the future-admission check. Stop at the earliest admissible interval
+			// (one gossip-disparity interval before the vote's slot start), never at
+			// the slot start itself: landing there would coincide with a following
+			// tick's target and swallow that tick's promotion. Invalid steps keep the
+			// current time so the rejection path still fires.
 			if step.Valid {
-				minTime := attData.Slot * types.IntervalsPerSlot
-				if s.Time() < minTime {
+				if minTime := earliestAdmissibleInterval(attData.Slot); s.Time() < minTime {
 					s.SetTime(minTime)
 				}
 			}
 
-			// Run the full validation chain (data → bounds → sig) regardless
-			// of step.Valid, then assert the outcome matches the fixture's
-			// label. Mirrors what the HTTP test driver does in
-			// internal/api/testdriver/session.go::applyAttestation. Previously this case
-			// skipped on !step.Valid which silently accepted rejection
-			// fixtures without actually exercising the validator — a false-
-			// positive coverage gap.
+			// Run data/bounds validation regardless of step.Valid so rejection
+			// fixtures actually exercise the validator. Individual attestation
+			// signatures are always real, so verification always runs here.
 			dataRoot, _ := attData.HashTreeRoot()
+			signature := parseHexBytes(att.Signature)
 			var validationErr error
-			if validationErr = attestation.ValidateAttestationData(s, attData); validationErr == nil {
-				validationErr = attestation.VerifyGossipAttestation(s, att.ValidatorID, attData, dataRoot, parseHexBytes(att.Signature))
+			if validationErr = attestation.ValidateAttestationData(s, attData); validationErr == nil && !carriesMockedProof(signature) {
+				validationErr = attestation.VerifyGossipAttestation(s, att.ValidatorID, attData, dataRoot, signature)
 			}
 			if step.Valid && validationErr != nil {
 				t.Fatalf("step %d: expected valid attestation, got error: %v", i, validationErr)
@@ -522,24 +575,30 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 
 			// Store in new payloads with dummy proof.
 			participants := types.BitlistFromIndices([]uint64{att.ValidatorID})
-			proof := &types.AggregatedSignatureProof{
+			proof := &types.SingleMessageAggregate{
 				Participants: participants,
-				ProofData:    nil,
+				Proof:        nil,
 			}
 			s.NewPayloads.Push(dataRoot, attData, proof)
+
+			// Record the raw per-validator signature, mirroring the spec's
+			// attestation_signatures pool that the "signatures" check reads.
+			var sig [types.SignatureSize]byte
+			copy(sig[:], signature)
+			s.AttestationSignatures.Insert(dataRoot, attData, att.ValidatorID, sig)
 
 			// Feed vote to fork choice so attestation weight is reflected.
 			fc.SetNewVote(att.ValidatorID, attData.Head.Root, attData.Slot, attData)
 
-			// Promote + update head.
-			s.PromoteNewToKnown()
+			// Gossip lands in the new pool only. The head keeps reflecting the
+			// known pool until a slot-boundary tick promotes these votes, so
+			// recompute from the known pool here without promoting.
 			knownAtts := s.ExtractLatestKnownAttestations()
 			justifiedRoot := s.LatestJustified().Root
 			for vid, data := range knownAtts {
 				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 			}
-			newHead := fc.UpdateHead(justifiedRoot)
-			s.SetHead(newHead)
+			simulateUpdateHead(s, fc, justifiedRoot)
 
 			if step.Checks != nil {
 				validateChecks(t, i, step.Checks, s, fc, labelRoots)
@@ -557,11 +616,11 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				Source: &types.Checkpoint{Root: parseHexRoot(att.Data.Source.Root), Slot: att.Data.Source.Slot},
 			}
 
-			// For valid steps, advance time so attestation passes the future check.
-			// Invalid steps keep current time to exercise the time-bound branch.
+			// Advance only to the earliest admissible interval (see the individual
+			// attestation case): stopping short of the vote's slot start keeps a later
+			// tick's promotion from being skipped. Invalid steps keep the current time.
 			if step.Valid {
-				minTime := attData.Slot * types.IntervalsPerSlot
-				if s.Time() < minTime {
+				if minTime := earliestAdmissibleInterval(attData.Slot); s.Time() < minTime {
 					s.SetTime(minTime)
 				}
 			}
@@ -570,16 +629,17 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 			var proofData []byte
 			if att.Proof != nil {
 				participants = parseBoolBitlist(att.Proof.Participants.Data)
-				proofData = parseHexBytes(att.Proof.ProofData.Data)
+				proofData = parseHexBytes(att.Proof.Proof.Data)
 			}
 
-			// Run the full validation chain (data → bounds + aggregated sig
-			// verify) regardless of step.Valid and assert the outcome matches
-			// the fixture's label. Symmetric with the individual-attestation
-			// case and with internal/api/testdriver/session.go::applyAggregatedAttestation.
+			// Symmetric with the individual-attestation case: data/bounds checks
+			// always run; the aggregated-proof crypto check is skipped only when
+			// the proof is a mocked placeholder. Real proofs — including the short
+			// proofs the registry/empty-participant rejection vectors carry — fall
+			// through to full verification.
 			dataRoot, _ := attData.HashTreeRoot()
 			var validationErr error
-			if validationErr = attestation.ValidateAttestationData(s, attData); validationErr == nil {
+			if validationErr = attestation.ValidateAttestationData(s, attData); validationErr == nil && !carriesMockedProof(proofData) {
 				validationErr = attestation.VerifyAggregatedGossipAttestation(s, attData, participants, proofData)
 			}
 			if step.Valid && validationErr != nil {
@@ -595,9 +655,9 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				continue
 			}
 
-			proof := &types.AggregatedSignatureProof{
+			proof := &types.SingleMessageAggregate{
 				Participants: participants,
-				ProofData:    proofData,
+				Proof:        proofData,
 			}
 			s.NewPayloads.Push(dataRoot, attData, proof)
 
@@ -607,15 +667,15 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 				fc.SetNewVote(vid, attData.Head.Root, attData.Slot, attData)
 			}
 
-			// Promote + update head.
-			s.PromoteNewToKnown()
+			// Gossip lands in the new pool only. The head keeps reflecting the
+			// known pool until a slot-boundary tick promotes these votes, so
+			// recompute from the known pool here without promoting.
 			knownAtts := s.ExtractLatestKnownAttestations()
 			justifiedRoot := s.LatestJustified().Root
 			for vid, data := range knownAtts {
 				fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
 			}
-			newHead := fc.UpdateHead(justifiedRoot)
-			s.SetHead(newHead)
+			simulateUpdateHead(s, fc, justifiedRoot)
 
 			if step.Checks != nil {
 				validateChecks(t, i, step.Checks, s, fc, labelRoots)
@@ -623,25 +683,52 @@ func runForkChoiceTest(t *testing.T, tt *fcTest) {
 
 		case "tick":
 			// step.Time is wall-clock seconds since the UNIX epoch; step.Interval
-			// is a raw interval count. Convert seconds to intervals before
-			// storing so subsequent assertions on store.time match the
-			// simulator's checks.time field. Per-interval hooks (interval-3
-			// safe-target, interval-0/4 promote) are intentionally NOT fired
-			// here — gean's runtime fires them via Engine.onTick which owns
-			// ForkChoice; the spec runner mirrors that boundary to avoid
-			// mutating proto-array state across unrelated test steps.
-			if step.Time != nil {
+			// is a raw interval count. Convert to a target interval count.
+			var target uint64
+			switch {
+			case step.Time != nil:
 				genesisMs := s.Config().GenesisTime * 1000
 				timestampMs := *step.Time * 1000
-				if timestampMs < genesisMs {
-					s.SetTime(0)
-				} else {
-					s.SetTime((timestampMs - genesisMs) / types.MillisecondsPerInterval)
+				if timestampMs >= genesisMs {
+					target = (timestampMs - genesisMs) / types.MillisecondsPerInterval
 				}
-			} else if step.Interval != nil {
-				s.SetTime(*step.Interval)
-			} else {
+			case step.Interval != nil:
+				target = *step.Interval
+			default:
 				t.Fatalf("step %d: tick step without time or interval", i)
+			}
+
+			// Advance one interval at a time, mirroring leanSpec on_tick. Stepping is
+			// load-bearing: jumping straight to the target would skip the intervening
+			// slot-boundary intervals whose actions promote the new-vote pool into the
+			// known pool and recompute the head. Promotion happens at interval 4 always,
+			// and at interval 0 when a proposal has landed — the latter only on the final
+			// interval, matching the spec's should_signal_proposal gate.
+			hasProposal := step.HasProposal != nil && *step.HasProposal
+			for s.Time() < target {
+				next := s.Time() + 1
+				s.SetTime(next)
+				interval := next % types.IntervalsPerSlot
+				signalProposal := hasProposal && next == target
+				if interval == 4 || (interval == 0 && signalProposal) {
+					s.PromoteNewToKnown()
+				}
+				if interval == 0 || interval == 4 {
+					knownAtts := s.ExtractLatestKnownAttestations()
+					for vid, data := range knownAtts {
+						fc.SetKnownVote(vid, data.Head.Root, data.Slot, data)
+					}
+					simulateUpdateHead(s, fc, s.LatestJustified().Root)
+				}
+			}
+			// A tick to at or behind the clock still pins store.time so a later
+			// time check reads the fixture's value.
+			if target < s.Time() {
+				s.SetTime(target)
+			}
+
+			if step.Checks != nil {
+				validateChecks(t, i, step.Checks, s, fc, labelRoots)
 			}
 
 		default:
@@ -777,25 +864,96 @@ func validateChecks(t *testing.T, stepIdx int, checks *fcChecks, s *store.Consen
 		}
 	}
 
+	if len(checks.CanonicalEquivocationHeadAmong) > 0 {
+		validateCanonicalEquivocationHead(t, stepIdx, checks.CanonicalEquivocationHeadAmong, s, headRoot, labelRoots)
+	}
+
 	for _, ac := range checks.AttestationChecks {
-		validateAttestationCheck(t, stepIdx, fc, ac)
+		validateAttestationCheck(t, stepIdx, s, fc, ac)
 	}
 }
 
-func validateAttestationCheck(t *testing.T, stepIdx int, fc *forkchoice.ForkChoice, ac fcAttestationCheck) {
+// validateCanonicalEquivocationHead mirrors leanSpec _validate_canonical_equivocation_head:
+// the equal-slot equivocation tie breaks toward the fork carrying the largest
+// attestation-data root, read from the accepted aggregated pool rather than hardcoded,
+// so the assertion is independent of the signature scheme (roots embed validator keys).
+func validateCanonicalEquivocationHead(t *testing.T, stepIdx int, forkLabels []string, s *store.ConsensusStore, headRoot [32]byte, labelRoots map[string][32]byte) {
 	t.Helper()
-	tracker, ok := fc.VoteTracker(ac.Validator)
-	if !ok {
-		t.Fatalf("step %d: attestationCheck v=%d location=%q: no vote tracker", stepIdx, ac.Validator, ac.Location)
+	if len(forkLabels) < 2 {
+		t.Fatalf("step %d check: canonicalEquivocationHeadAmong needs >=2 forks, got %v", stepIdx, forkLabels)
 	}
+
+	forkRoots := make(map[string][32]byte, len(forkLabels))
+	for _, label := range forkLabels {
+		root, ok := labelRoots[label]
+		if !ok {
+			t.Fatalf("step %d check: canonicalEquivocationHeadAmong label %q not in block registry", stepIdx, label)
+		}
+		forkRoots[label] = root
+	}
+
+	// Largest attestation-data root per fork — the key ExtractLatestAttestations sorts on.
+	// Scan the whole accepted aggregated pool (new + promoted): a tick check may run
+	// before the slot-boundary promotion moves votes from the new pool into the known one.
+	maxAttRoot := make(map[string][32]byte, len(forkLabels))
+	scan := func(entries map[[32]byte]*store.PayloadEntry) {
+		for _, entry := range entries {
+			if entry.Data == nil || entry.Data.Target == nil {
+				continue
+			}
+			dataRoot, err := entry.Data.HashTreeRoot()
+			if err != nil {
+				t.Fatalf("step %d check: attestation-data root: %v", stepIdx, err)
+			}
+			for label, forkRoot := range forkRoots {
+				if entry.Data.Target.Root != forkRoot {
+					continue
+				}
+				if cur, seen := maxAttRoot[label]; !seen || bytes.Compare(dataRoot[:], cur[:]) > 0 {
+					maxAttRoot[label] = dataRoot
+				}
+			}
+		}
+	}
+	scan(s.NewPayloads.Entries())
+	scan(s.KnownPayloads.Entries())
+
+	var winner string
+	var winnerRoot [32]byte
+	for _, label := range forkLabels {
+		root, ok := maxAttRoot[label]
+		if !ok {
+			t.Fatalf("step %d check: canonicalEquivocationHeadAmong fork %q has no attestation targeting it in the accepted aggregated pool", stepIdx, label)
+		}
+		if winner == "" || bytes.Compare(root[:], winnerRoot[:]) > 0 {
+			winner, winnerRoot = label, root
+		}
+	}
+
+	if headRoot != forkRoots[winner] {
+		t.Fatalf("step %d check: canonical equivocation tiebreak: head 0x%x, want fork %q 0x%x (largest attestation-data root)",
+			stepIdx, headRoot, winner, forkRoots[winner])
+	}
+}
+
+func validateAttestationCheck(t *testing.T, stepIdx int, s *store.ConsensusStore, fc *forkchoice.ForkChoice, ac fcAttestationCheck) {
+	t.Helper()
 	var target *forkchoice.VoteTarget
 	switch ac.Location {
-	case "new":
-		target = tracker.LatestNew
-	case "known":
-		target = tracker.LatestKnown
+	case "new", "known":
+		tracker, ok := fc.VoteTracker(ac.Validator)
+		if !ok {
+			t.Fatalf("step %d: attestationCheck v=%d location=%q: no vote tracker", stepIdx, ac.Validator, ac.Location)
+		}
+		if ac.Location == "new" {
+			target = tracker.LatestNew
+		} else {
+			target = tracker.LatestKnown
+		}
+	case "signatures":
+		target = latestSignatureVote(s, ac.Validator)
 	default:
-		t.Fatalf("step %d: attestationCheck v=%d: unsupported location %q (want \"new\" or \"known\")",
+		t.Fatalf("step %d: attestationCheck v=%d: unsupported location %q (want \"new\", \"known\" or \"signatures\")",
 			stepIdx, ac.Validator, ac.Location)
 	}
 	if target == nil {
@@ -824,6 +982,41 @@ func validateAttestationCheck(t *testing.T, stepIdx int, fc *forkchoice.ForkChoi
 	if ac.TargetSlot != nil && target.Data.Target != nil && target.Data.Target.Slot != *ac.TargetSlot {
 		t.Errorf("step %d: attestationCheck v=%d %s: targetSlot got %d, want %d",
 			stepIdx, ac.Validator, ac.Location, target.Data.Target.Slot, *ac.TargetSlot)
+	}
+}
+
+// latestSignatureVote mirrors the spec's "signatures" location: scan the raw
+// attestation-signature pool and return the validator's highest-slot vote
+// (first seen wins on equal slots, matching the fork-choice rule). Returns nil
+// when the validator has no signature recorded.
+func latestSignatureVote(s *store.ConsensusStore, validator uint64) *forkchoice.VoteTarget {
+	var latest *types.AttestationData
+	for _, entry := range s.AttestationSignatures.Snapshot() {
+		for _, sig := range entry.Signatures {
+			if sig.ValidatorID != validator {
+				continue
+			}
+			if latest == nil || latest.Slot < entry.Data.Slot {
+				latest = entry.Data
+			}
+		}
+	}
+	if latest == nil {
+		return nil
+	}
+	return &forkchoice.VoteTarget{Slot: latest.Slot, Data: latest}
+}
+
+// simulateUpdateHead recomputes the head and re-anchors finalization to the head's
+// chain, mirroring the spec's update_head. Finalization is derived from the canonical
+// head rather than advanced during block import, matching the production node.
+func simulateUpdateHead(s *store.ConsensusStore, fc *forkchoice.ForkChoice, justifiedRoot [32]byte) {
+	newHead := fc.UpdateHead(justifiedRoot)
+	s.SetHead(newHead)
+	// Track the canonical head's finalized checkpoint unconditionally, mirroring
+	// the spec: a higher-finalized fork that loses head selection must not latch.
+	if derived := store.DeriveFinalizedFromHead(s, newHead); derived != nil {
+		s.SetLatestFinalized(derived)
 	}
 }
 

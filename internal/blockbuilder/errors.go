@@ -8,12 +8,13 @@ import (
 	"github.com/geanlabs/gean/internal/types"
 )
 
-var ErrJustifiedDivergenceNotClosed = errors.New("justified divergence not closed")
 var ErrMalformedInput = errors.New("malformed blockbuilder input")
 var ErrMalformedPayload = errors.New("malformed payload")
 var ErrPayloadHeadUnknown = errors.New("payload head root unknown")
+var ErrPayloadHeadOffChain = errors.New("payload head off canonical chain")
 var ErrPayloadRootMismatch = errors.New("payload root mismatch")
 var ErrPayloadVoteInvalid = errors.New("payload vote invalid")
+var ErrPayloadSourceNotCurrentJustified = errors.New("payload source is not the current justified checkpoint")
 
 var errExpectedSkip = errors.New("expected builder skip")
 
@@ -28,27 +29,6 @@ func voteReasonExpected(reason string) bool {
 	default:
 		return false
 	}
-}
-
-func errJustifiedDivergenceNotClosed(actual, required *types.Checkpoint) error {
-	actualSlot, requiredSlot := uint64(0), uint64(0)
-	actualRoot, requiredRoot := types.ZeroRoot, types.ZeroRoot
-	if actual != nil {
-		actualSlot = actual.Slot
-		actualRoot = actual.Root
-	}
-	if required != nil {
-		requiredSlot = required.Slot
-		requiredRoot = required.Root
-	}
-	return fmt.Errorf(
-		"%w: produced checkpoint slot=%d root=0x%x does not satisfy required checkpoint slot=%d root=0x%x",
-		ErrJustifiedDivergenceNotClosed,
-		actualSlot,
-		actualRoot,
-		requiredSlot,
-		requiredRoot,
-	)
 }
 
 func errMalformedHeadState(field string) error {
@@ -69,6 +49,15 @@ func errPayloadRootMismatch(dataRoot, computed [32]byte) error {
 
 func errPayloadHeadUnknown(root [32]byte) error {
 	return fmt.Errorf("%w: head root=0x%x [%w]", ErrPayloadHeadUnknown, root, errExpectedSkip)
+}
+
+func errPayloadHeadOffChain(root [32]byte) error {
+	return fmt.Errorf("%w: head root=0x%x [%w]", ErrPayloadHeadOffChain, root, errExpectedSkip)
+}
+
+func errPayloadSourceNotCurrentJustified(sourceSlot, justifiedSlot uint64) error {
+	return fmt.Errorf("%w: source slot=%d justified slot=%d [%w]",
+		ErrPayloadSourceNotCurrentJustified, sourceSlot, justifiedSlot, errExpectedSkip)
 }
 
 func errPayloadVoteInvalid(data *types.AttestationData, reason string) error {

@@ -1,13 +1,17 @@
-use leansig_wrapper::{XmssPublicKey, XmssSignature};
-use rec_aggregation::{
-    init_aggregation_bytecode, xmss_aggregate as rec_xmss_aggregate, xmss_verify_aggregation,
-    AggregatedXMSS,
+use backend::symmetric::Permutation;
+use backend::{
+    default_koalabear_poseidon1_16, default_koalabear_poseidon1_24, KoalaBear, PrimeField32,
 };
+use lean_multisig::{
+    aggregate_single_message_signatures, merge_single_message_aggregates, setup_prover,
+    setup_verifier, verify_multi_message_aggregate, verify_single_message_aggregate,
+    MultiMessageAggregateSignature, SingleMessageAggregateSignature, XmssPublicKey, XmssSignature,
+};
+use rec_aggregation::split_multi_message_aggregate_by_message;
+use std::panic::AssertUnwindSafe;
 use std::slice;
-use std::sync::Once;
+use std::sync::OnceLock;
 
-// Mirror hashsig-glue's struct layout with #[repr(C)]
-// These must match hashsig-glue/src/lib.rs exactly
 #[repr(C)]
 pub struct PublicKey {
     pub inner: XmssPublicKey,
@@ -18,228 +22,388 @@ pub struct Signature {
     pub inner: XmssSignature,
 }
 
-static PROVER_INIT: Once = Once::new();
-static VERIFIER_INIT: Once = Once::new();
+const MESSAGE_LEN: usize = 32;
 
+static PROVER_READY: OnceLock<bool> = OnceLock::new();
+static VERIFIER_READY: OnceLock<bool> = OnceLock::new();
+
+macro_rules! ffi_guard {
+    ($fallback:expr, $body:block) => {
+        std::panic::catch_unwind(AssertUnwindSafe(|| $body)).unwrap_or($fallback)
+    };
+}
+
+// setup_prover enables a process-wide arena allocator and warms the prover.
+// Its single shared region means two proofs must never be generated
+// concurrently; the Go-side proving.Gate serializes all aggregate/merge/split
+// work to one at a time, so that invariant holds. Verification does not use the
+// arena and stays safe to run concurrently.
 #[no_mangle]
-pub extern "C" fn xmss_setup_prover() {
-    PROVER_INIT.call_once(|| {
-        init_aggregation_bytecode();
-        backend::precompute_dft_twiddles::<backend::KoalaBear>(1 << 24);
-    });
+pub extern "C" fn xmss_setup_prover() -> i32 {
+    let ready = PROVER_READY.get_or_init(|| std::panic::catch_unwind(setup_prover).is_ok());
+    if *ready {
+        0
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn xmss_setup_verifier() {
-    VERIFIER_INIT.call_once(|| {
-        init_aggregation_bytecode();
-    });
+pub extern "C" fn xmss_setup_verifier() -> i32 {
+    let ready = VERIFIER_READY.get_or_init(|| std::panic::catch_unwind(setup_verifier).is_ok());
+    if *ready {
+        0
+    } else {
+        -1
+    }
 }
 
-/// Aggregate signatures with recursive child proof support.
-/// Returns pointer to AggregatedXMSS on success, null on error.
-///
-/// # Safety
-/// - `raw_pub_keys` must point to an array of `num_raw` valid pointers to `PublicKey`.
-/// - `raw_signatures` must point to an array of `num_raw` valid pointers to `Signature`.
-/// - When `num_children > 0`:
-///   - `child_all_pub_keys` must point to a flat array of PublicKey pointers
-///     with total length = sum of `child_num_keys[0..num_children]`.
-///   - `child_num_keys` must point to an array of `num_children` elements.
-///   - `child_proof_ptrs` must point to an array of `num_children` pointers to proof bytes.
-///   - `child_proof_lens` must point to an array of `num_children` lengths.
-/// - `message_hash_ptr` must point to at least 32 bytes.
+unsafe fn write_out(src: &[u8], out: *mut u8, cap: usize, written: *mut usize) -> i32 {
+    if written.is_null() {
+        return -1;
+    }
+    *written = src.len();
+    if src.len() > cap {
+        return -2;
+    }
+    if !src.is_empty() {
+        if out.is_null() {
+            return -1;
+        }
+        std::ptr::copy_nonoverlapping(src.as_ptr(), out, src.len());
+    }
+    0
+}
+
+unsafe fn collect_pubkeys(
+    ptrs: *const *const PublicKey,
+    count: usize,
+) -> Option<Vec<XmssPublicKey>> {
+    if count > 0 && ptrs.is_null() {
+        return None;
+    }
+    let mut keys = Vec::with_capacity(count);
+    for &ptr in slice::from_raw_parts(ptrs, count) {
+        if ptr.is_null() {
+            return None;
+        }
+        keys.push((*ptr).inner.clone());
+    }
+    Some(keys)
+}
+
+unsafe fn collect_key_groups(
+    flat: *const *const PublicKey,
+    counts: *const usize,
+    group_count: usize,
+) -> Option<Vec<Vec<XmssPublicKey>>> {
+    if group_count == 0 || flat.is_null() || counts.is_null() {
+        return None;
+    }
+    let counts = slice::from_raw_parts(counts, group_count);
+    let mut groups = Vec::with_capacity(group_count);
+    let mut offset = 0usize;
+    for &count in counts {
+        groups.push(collect_pubkeys(flat.add(offset), count)?);
+        offset = offset.checked_add(count)?;
+    }
+    Some(groups)
+}
+
 #[no_mangle]
-pub unsafe extern "C" fn xmss_aggregate(
-    // Raw XMSS signatures
+pub unsafe extern "C" fn xmss_aggregate_type_1(
     raw_pub_keys: *const *const PublicKey,
     raw_signatures: *const *const Signature,
     num_raw: usize,
-    // Children
-    num_children: usize,
     child_all_pub_keys: *const *const PublicKey,
     child_num_keys: *const usize,
     child_proof_ptrs: *const *const u8,
     child_proof_lens: *const usize,
-    // Common parameters
-    message_hash_ptr: *const u8,
+    num_children: usize,
+    message_hash: *const u8,
     slot: u32,
     log_inv_rate: usize,
-) -> *const AggregatedXMSS {
-    if message_hash_ptr.is_null() {
-        return std::ptr::null();
-    }
-    if num_raw > 0 && (raw_pub_keys.is_null() || raw_signatures.is_null()) {
-        return std::ptr::null();
-    }
-    if num_children > 0
-        && (child_all_pub_keys.is_null()
-            || child_num_keys.is_null()
-            || child_proof_ptrs.is_null()
-            || child_proof_lens.is_null())
-    {
-        return std::ptr::null();
-    }
-
-    let message_hash: &[u8; 32] = match slice::from_raw_parts(message_hash_ptr, 32).try_into() {
-        Ok(arr) => arr,
-        Err(_) => return std::ptr::null(),
-    };
-
-    // Build raw XMSS pairs: (XmssPublicKey, XmssSignature)
-    let mut raw_xmss: Vec<(XmssPublicKey, XmssSignature)> = Vec::with_capacity(num_raw);
-    if num_raw > 0 {
-        let pk_ptrs = slice::from_raw_parts(raw_pub_keys, num_raw);
-        let sig_ptrs = slice::from_raw_parts(raw_signatures, num_raw);
-        for i in 0..num_raw {
-            if pk_ptrs[i].is_null() || sig_ptrs[i].is_null() {
-                return std::ptr::null();
-            }
-            raw_xmss.push(((*pk_ptrs[i]).inner.clone(), (*sig_ptrs[i]).inner.clone()));
+    out: *mut u8,
+    cap: usize,
+    written: *mut usize,
+) -> i32 {
+    ffi_guard!(-1, {
+        if message_hash.is_null()
+            || written.is_null()
+            || (num_raw > 0 && (raw_pub_keys.is_null() || raw_signatures.is_null()))
+            || (num_children > 0
+                && (child_all_pub_keys.is_null()
+                    || child_num_keys.is_null()
+                    || child_proof_ptrs.is_null()
+                    || child_proof_lens.is_null()))
+        {
+            return -1;
         }
-    }
-
-    // Build children: Vec<(&[XmssPublicKey], AggregatedXMSS)>
-    let mut children_pks: Vec<Vec<XmssPublicKey>> = Vec::with_capacity(num_children);
-    let mut children_proofs: Vec<AggregatedXMSS> = Vec::with_capacity(num_children);
-
-    if num_children > 0 {
-        let num_keys_arr = slice::from_raw_parts(child_num_keys, num_children);
-        let proof_ptrs = slice::from_raw_parts(child_proof_ptrs, num_children);
-        let proof_lens = slice::from_raw_parts(child_proof_lens, num_children);
-
-        let total_child_pks: usize = num_keys_arr.iter().sum();
-        let all_pk_ptrs = slice::from_raw_parts(child_all_pub_keys, total_child_pks);
-
-        let mut pk_offset: usize = 0;
-        for i in 0..num_children {
-            // Collect pub keys for this child
-            let n = num_keys_arr[i];
-            let mut pks = Vec::with_capacity(n);
-            for j in 0..n {
-                let pk_ptr = all_pk_ptrs[pk_offset + j];
-                if pk_ptr.is_null() {
-                    return std::ptr::null();
-                }
-                pks.push((*pk_ptr).inner.clone());
-            }
-            pk_offset += n;
-            children_pks.push(pks);
-
-            // Deserialize child proof
-            if proof_ptrs[i].is_null() || proof_lens[i] == 0 {
-                return std::ptr::null();
-            }
-            let proof_bytes = slice::from_raw_parts(proof_ptrs[i], proof_lens[i]);
-            let proof = match AggregatedXMSS::decompress(proof_bytes) {
-                Some(p) => p,
-                None => return std::ptr::null(),
+        let message: [u8; MESSAGE_LEN] =
+            match slice::from_raw_parts(message_hash, MESSAGE_LEN).try_into() {
+                Ok(message) => message,
+                Err(_) => return -1,
             };
-            children_proofs.push(proof);
+
+        let mut raw = Vec::with_capacity(num_raw);
+        if num_raw > 0 {
+            let keys = slice::from_raw_parts(raw_pub_keys, num_raw);
+            let signatures = slice::from_raw_parts(raw_signatures, num_raw);
+            for i in 0..num_raw {
+                if keys[i].is_null() || signatures[i].is_null() {
+                    return -1;
+                }
+                raw.push(((*keys[i]).inner.clone(), (*signatures[i]).inner.clone()));
+            }
         }
-    }
 
-    // Build children_with_keys: &[(&[XmssPublicKey], AggregatedXMSS)]
-    let children_with_keys: Vec<(&[XmssPublicKey], AggregatedXMSS)> = children_pks
-        .iter()
-        .zip(children_proofs)
-        .map(|(pks, proof)| (pks.as_slice(), proof))
-        .collect();
+        let mut children = Vec::with_capacity(num_children);
+        if num_children > 0 {
+            let counts = slice::from_raw_parts(child_num_keys, num_children);
+            let proofs = slice::from_raw_parts(child_proof_ptrs, num_children);
+            let lengths = slice::from_raw_parts(child_proof_lens, num_children);
+            let mut offset = 0usize;
+            for i in 0..num_children {
+                let keys = match collect_pubkeys(child_all_pub_keys.add(offset), counts[i]) {
+                    Some(keys) => keys,
+                    None => return -1,
+                };
+                offset = match offset.checked_add(counts[i]) {
+                    Some(offset) => offset,
+                    None => return -1,
+                };
+                if proofs[i].is_null() || lengths[i] == 0 {
+                    return -1;
+                }
+                let proof = slice::from_raw_parts(proofs[i], lengths[i]);
+                match SingleMessageAggregateSignature::decompress_without_pubkeys(proof, keys) {
+                    Some(proof) => children.push(proof),
+                    None => return -1,
+                }
+            }
+        }
 
-    // Call recursive aggregation with catch_unwind for CGo safety.
-    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        rec_xmss_aggregate(
-            &children_with_keys,
-            raw_xmss,
-            message_hash,
-            slot,
-            log_inv_rate,
-        )
-    })) {
-        // xmss_aggregate is fallible: Result<(signers, sig), AggregationError>.
-        Ok(Ok((_pub_keys, agg_sig))) => Box::into_raw(Box::new(agg_sig)),
-        Ok(Err(_)) => std::ptr::null(), // aggregation rejected the inputs
-        Err(_) => std::ptr::null(),     // panic caught (unwinding across FFI is UB)
-    }
+        let proof = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            aggregate_single_message_signatures(&children, raw, message, slot, log_inv_rate)
+        })) {
+            Ok(Ok(proof)) => proof,
+            _ => return -1,
+        };
+        write_out(&proof.compress_without_pubkeys(), out, cap, written)
+    })
 }
 
-/// Verify aggregated signatures.
 #[no_mangle]
-pub unsafe extern "C" fn xmss_verify_aggregated(
+pub unsafe extern "C" fn xmss_verify_type_1(
     public_keys: *const *const PublicKey,
     num_keys: usize,
-    message_hash_ptr: *const u8,
-    agg_sig_bytes: *const u8,
-    agg_sig_len: usize,
-    epoch: u32,
+    message_hash: *const u8,
+    slot: u32,
+    proof: *const u8,
+    proof_len: usize,
 ) -> bool {
-    if public_keys.is_null() || message_hash_ptr.is_null() || agg_sig_bytes.is_null() {
-        return false;
-    }
-
-    let message_hash: &[u8; 32] = match slice::from_raw_parts(message_hash_ptr, 32).try_into() {
-        Ok(arr) => arr,
-        Err(_) => return false,
-    };
-
-    let pub_key_ptrs = slice::from_raw_parts(public_keys, num_keys);
-    let mut pub_keys: Vec<XmssPublicKey> = Vec::with_capacity(num_keys);
-    for &pk_ptr in pub_key_ptrs {
-        if pk_ptr.is_null() {
+    ffi_guard!(false, {
+        if message_hash.is_null() || proof.is_null() || proof_len == 0 {
             return false;
         }
-        pub_keys.push((*pk_ptr).inner.clone());
-    }
-
-    let proof_bytes = slice::from_raw_parts(agg_sig_bytes, agg_sig_len);
-    let agg_sig = match AggregatedXMSS::decompress(proof_bytes) {
-        Some(sig) => sig,
-        None => return false,
-    };
-
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        xmss_verify_aggregation(pub_keys, &agg_sig, message_hash, epoch).is_ok()
-    }))
-    .unwrap_or_default()
+        let message: [u8; MESSAGE_LEN] =
+            match slice::from_raw_parts(message_hash, MESSAGE_LEN).try_into() {
+                Ok(message) => message,
+                Err(_) => return false,
+            };
+        let keys = match collect_pubkeys(public_keys, num_keys) {
+            Some(keys) => keys,
+            None => return false,
+        };
+        let proof = match SingleMessageAggregateSignature::decompress_without_pubkeys(
+            slice::from_raw_parts(proof, proof_len),
+            keys,
+        ) {
+            Some(proof) => proof,
+            None => return false,
+        };
+        if proof.info.without_pubkeys.message != message || proof.info.without_pubkeys.slot != slot
+        {
+            return false;
+        }
+        verify_single_message_aggregate(&proof).is_ok()
+    })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn xmss_free_aggregate_signature(agg_sig: *mut AggregatedXMSS) {
-    if !agg_sig.is_null() {
-        drop(Box::from_raw(agg_sig));
-    }
+pub unsafe extern "C" fn xmss_merge_type_1_to_type_2(
+    proof_ptrs: *const *const u8,
+    proof_lens: *const usize,
+    pubkeys: *const *const PublicKey,
+    pubkey_counts: *const usize,
+    count: usize,
+    log_inv_rate: usize,
+    out: *mut u8,
+    cap: usize,
+    written: *mut usize,
+) -> i32 {
+    ffi_guard!(-1, {
+        if count == 0
+            || proof_ptrs.is_null()
+            || proof_lens.is_null()
+            || pubkeys.is_null()
+            || pubkey_counts.is_null()
+            || written.is_null()
+        {
+            return -1;
+        }
+        let proof_ptrs = slice::from_raw_parts(proof_ptrs, count);
+        let proof_lens = slice::from_raw_parts(proof_lens, count);
+        let groups = match collect_key_groups(pubkeys, pubkey_counts, count) {
+            Some(groups) => groups,
+            None => return -1,
+        };
+        let mut proofs = Vec::with_capacity(count);
+        for i in 0..count {
+            if proof_ptrs[i].is_null() || proof_lens[i] == 0 {
+                return -1;
+            }
+            match SingleMessageAggregateSignature::decompress_without_pubkeys(
+                slice::from_raw_parts(proof_ptrs[i], proof_lens[i]),
+                groups[i].clone(),
+            ) {
+                Some(proof) => proofs.push(proof),
+                None => return -1,
+            }
+        }
+        let proof = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            merge_single_message_aggregates(proofs, log_inv_rate)
+        })) {
+            Ok(Ok(proof)) => proof,
+            _ => return -1,
+        };
+        write_out(&proof.compress_without_pubkeys(), out, cap, written)
+    })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn xmss_aggregate_signature_to_bytes(
-    agg_sig: *const AggregatedXMSS,
-    buffer: *mut u8,
-    buffer_len: usize,
-) -> usize {
-    if agg_sig.is_null() || buffer.is_null() {
-        return 0;
-    }
-    let agg_sig_ref = &*agg_sig;
-    let ssz_bytes = agg_sig_ref.compress();
-    if ssz_bytes.len() > buffer_len {
-        return 0;
-    }
-    let output_slice = slice::from_raw_parts_mut(buffer, buffer_len);
-    output_slice[..ssz_bytes.len()].copy_from_slice(&ssz_bytes);
-    ssz_bytes.len()
+pub unsafe extern "C" fn xmss_split_type_2_by_message(
+    proof: *const u8,
+    proof_len: usize,
+    pubkeys: *const *const PublicKey,
+    pubkey_counts: *const usize,
+    count: usize,
+    target_message: *const u8,
+    log_inv_rate: usize,
+    out: *mut u8,
+    cap: usize,
+    written: *mut usize,
+) -> i32 {
+    ffi_guard!(-1, {
+        if proof.is_null() || proof_len == 0 || target_message.is_null() || written.is_null() {
+            return -1;
+        }
+        let groups = match collect_key_groups(pubkeys, pubkey_counts, count) {
+            Some(groups) => groups,
+            None => return -1,
+        };
+        let proof = match MultiMessageAggregateSignature::decompress_without_pubkeys(
+            slice::from_raw_parts(proof, proof_len),
+            groups,
+        ) {
+            Some(proof) => proof,
+            None => return -1,
+        };
+        let target: [u8; MESSAGE_LEN] =
+            match slice::from_raw_parts(target_message, MESSAGE_LEN).try_into() {
+                Ok(target) => target,
+                Err(_) => return -1,
+            };
+        let proof = match std::panic::catch_unwind(AssertUnwindSafe(|| {
+            split_multi_message_aggregate_by_message(proof, target, log_inv_rate)
+        })) {
+            Ok(Ok(proof)) => proof,
+            _ => return -1,
+        };
+        write_out(&proof.compress_without_pubkeys(), out, cap, written)
+    })
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn xmss_aggregate_signature_from_bytes(
-    bytes: *const u8,
-    bytes_len: usize,
-) -> *mut AggregatedXMSS {
-    if bytes.is_null() || bytes_len == 0 {
-        return std::ptr::null_mut();
-    }
-    let input_slice = slice::from_raw_parts(bytes, bytes_len);
-    match AggregatedXMSS::decompress(input_slice) {
-        Some(agg_sig) => Box::into_raw(Box::new(agg_sig)),
-        None => std::ptr::null_mut(),
-    }
+pub unsafe extern "C" fn xmss_verify_type_2(
+    proof: *const u8,
+    proof_len: usize,
+    pubkeys: *const *const PublicKey,
+    pubkey_counts: *const usize,
+    count: usize,
+    message_hashes: *const u8,
+    message_slots: *const u32,
+) -> bool {
+    ffi_guard!(false, {
+        if proof.is_null() || proof_len == 0 || message_hashes.is_null() || message_slots.is_null()
+        {
+            return false;
+        }
+        let groups = match collect_key_groups(pubkeys, pubkey_counts, count) {
+            Some(groups) => groups,
+            None => return false,
+        };
+        let proof = match MultiMessageAggregateSignature::decompress_without_pubkeys(
+            slice::from_raw_parts(proof, proof_len),
+            groups,
+        ) {
+            Some(proof) => proof,
+            None => return false,
+        };
+        if proof.info.len() != count {
+            return false;
+        }
+        let hashes = slice::from_raw_parts(message_hashes, count * MESSAGE_LEN);
+        let slots = slice::from_raw_parts(message_slots, count);
+        for i in 0..count {
+            let mut expected = [0; MESSAGE_LEN];
+            expected.copy_from_slice(&hashes[i * MESSAGE_LEN..(i + 1) * MESSAGE_LEN]);
+            if proof.info[i].without_pubkeys.message != expected
+                || proof.info[i].without_pubkeys.slot != slots[i]
+            {
+                return false;
+            }
+        }
+        verify_multi_message_aggregate(&proof).is_ok()
+    })
+}
+
+// Poseidon permutation over KoalaBear, exposed for spec test vectors. The state
+// is the canonical u32 field representation, permuted in place. This is the same
+// instance the XMSS stack hashes with, so it matches the spec. Returns -1 on a
+// null pointer or wrong width.
+#[no_mangle]
+pub unsafe extern "C" fn poseidon_permute_kb16(state: *mut u32, len: usize) -> i32 {
+    ffi_guard!(-1, {
+        if state.is_null() || len != 16 {
+            return -1;
+        }
+        let raw = slice::from_raw_parts_mut(state, 16);
+        let mut input = [0u32; 16];
+        input.copy_from_slice(raw);
+        let mut fe = KoalaBear::new_array(input);
+        default_koalabear_poseidon1_16().permute_mut(&mut fe);
+        for (dst, x) in raw.iter_mut().zip(fe.iter()) {
+            *dst = x.as_canonical_u32();
+        }
+        0
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn poseidon_permute_kb24(state: *mut u32, len: usize) -> i32 {
+    ffi_guard!(-1, {
+        if state.is_null() || len != 24 {
+            return -1;
+        }
+        let raw = slice::from_raw_parts_mut(state, 24);
+        let mut input = [0u32; 24];
+        input.copy_from_slice(raw);
+        let mut fe = KoalaBear::new_array(input);
+        default_koalabear_poseidon1_24().permute_mut(&mut fe);
+        for (dst, x) in raw.iter_mut().zip(fe.iter()) {
+            *dst = x.as_canonical_u32();
+        }
+        0
+    })
 }

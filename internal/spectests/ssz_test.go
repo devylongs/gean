@@ -45,23 +45,7 @@ type sszCodec interface {
 	HashTreeRoot() ([32]byte, error)
 }
 
-// hashSkipTypes are container types whose hash_tree_root is known to diverge
-// between the spec (Pydantic Container-merkleize of inner Signature fields)
-// and the broader client ecosystem (which treats Signature as a fixed-bytes
-// blob, or doesn't compute these roots at all).
-//
-// No client computes hash_tree_root on SignedBlock / BlockSignatures /
-// SignedAttestation on the consensus hot path — block roots come from
-// hash_tree_root(Block), with the signature outside the root — so the
-// divergence isn't a live interop problem. We still exercise encode/decode
-// round-trip for these types; only the hash check is skipped. Resolution
-// should land upstream (either override hash_tree_root on Signature to match
-// the ecosystem, or drop the dead-path fixtures).
-var hashSkipTypes = map[string]bool{
-	"BlockSignatures":   true,
-	"SignedAttestation": true,
-	"SignedBlock":       true,
-}
+var hashSkipTypes = map[string]bool{"SignedAttestation": true}
 
 // sszFactories maps the spec typeName to a zero-value gean struct.
 //
@@ -81,14 +65,14 @@ var sszFactories = map[string]func() sszCodec{
 	"BlockHeader":                 func() sszCodec { return new(types.BlockHeader) },
 	"BlockBody":                   func() sszCodec { return new(types.BlockBody) },
 	"Block":                       func() sszCodec { return new(types.Block) },
-	"BlockSignatures":             func() sszCodec { return new(types.BlockSignatures) },
 	"SignedBlock":                 func() sszCodec { return new(types.SignedBlock) },
 	"AttestationData":             func() sszCodec { return new(types.AttestationData) },
 	"Attestation":                 func() sszCodec { return new(types.Attestation) },
 	"SignedAttestation":           func() sszCodec { return new(types.SignedAttestation) },
 	"AggregatedAttestation":       func() sszCodec { return new(types.AggregatedAttestation) },
 	"SignedAggregatedAttestation": func() sszCodec { return new(types.SignedAggregatedAttestation) },
-	"AggregatedSignatureProof":    func() sszCodec { return new(types.AggregatedSignatureProof) },
+	"SingleMessageAggregate":      func() sszCodec { return new(types.SingleMessageAggregate) },
+	"MultiMessageAggregate":       func() sszCodec { return new(types.MultiMessageAggregate) },
 	"State":                       func() sszCodec { return new(types.State) },
 	"Status":                      func() sszCodec { return new(sszStatusAdapter) },
 	"BlocksByRootRequest":         func() sszCodec { return new(sszBlocksByRootRequestAdapter) },

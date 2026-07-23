@@ -16,47 +16,82 @@ const (
 	VoteReasonTargetNotJustifiable   = "target_not_justifiable"
 )
 
-func VoteInvalidReason(state *types.State, source, target *types.Checkpoint) string {
+// VoteInvalidReason classifies a vote for filtering. A non-empty reason means the
+// vote is skipped; a non-nil error is a hard block rejection. The justification
+// queries are ordered ahead of the chain checks to mirror leanSpec
+// process_attestations, where an out-of-range source or target slot rejects the
+// block before the chain-membership filter runs.
+func VoteInvalidReason(state *types.State, source, target *types.Checkpoint) (string, error) {
 	if state == nil || state.LatestFinalized == nil || source == nil || target == nil {
-		return VoteReasonNilInput
+		return VoteReasonNilInput, nil
 	}
 
 	finalizedSlot := state.LatestFinalized.Slot
-	if !IsSlotJustified(state, finalizedSlot, source.Slot) {
-		return VoteReasonSourceNotJustified
+
+	sourceJustified, err := IsSlotJustified(state, finalizedSlot, source.Slot)
+	if err != nil {
+		return "", err
 	}
+	if !sourceJustified {
+		return VoteReasonSourceNotJustified, nil
+	}
+
+	targetJustified, err := IsSlotJustified(state, finalizedSlot, target.Slot)
+	if err != nil {
+		return "", err
+	}
+	if targetJustified {
+		return VoteReasonTargetAlreadyJustified, nil
+	}
+
 	if types.IsZeroRoot(source.Root) || types.IsZeroRoot(target.Root) {
-		return VoteReasonZeroRoot
+		return VoteReasonZeroRoot, nil
 	}
 	if !checkpointExists(state, source) || !checkpointExists(state, target) {
-		return VoteReasonChainMismatch
-	}
-	if IsSlotJustified(state, finalizedSlot, target.Slot) {
-		return VoteReasonTargetAlreadyJustified
+		return VoteReasonChainMismatch, nil
 	}
 	if target.Slot <= source.Slot {
-		return VoteReasonTargetNotAfterSource
+		return VoteReasonTargetNotAfterSource, nil
 	}
 	if !SlotIsJustifiableAfter(target.Slot, finalizedSlot) {
-		return VoteReasonTargetNotJustifiable
+		return VoteReasonTargetNotJustifiable, nil
 	}
-	return ""
+	return "", nil
 }
 
 func IsValidVote(state *types.State, source, target *types.Checkpoint) bool {
-	return VoteInvalidReason(state, source, target) == ""
+	reason, err := VoteInvalidReason(state, source, target)
+	return err == nil && reason == ""
 }
 
-func IsSlotJustified(state *types.State, finalizedSlot, slot uint64) bool {
+// HeadMatchesChain reports whether the attestation head sits on the canonical
+// chain at its slot. Mirrors the head clause of leanSpec attestation_data_matches_chain;
+// applied both in process_attestations and in block production.
+func HeadMatchesChain(state *types.State, head *types.Checkpoint) bool {
+	return head != nil && !types.IsZeroRoot(head.Root) && checkpointExists(state, head)
+}
+
+// IsSlotJustified reports whether a slot is justified. Slots at or below the
+// finalized boundary are justified by definition. An active slot beyond the tracked
+// bitfield is not a "false" answer but a domain rejection: leanSpec surfaces it as
+// JUSTIFIED_SLOT_OUT_OF_RANGE rather than letting it pass as an unjustified vote.
+func IsSlotJustified(state *types.State, finalizedSlot, slot uint64) (bool, error) {
 	if slot <= finalizedSlot {
-		return true
+		return true, nil
 	}
 	if state == nil {
-		return false
+		return false, nil
 	}
 	relIndex := slot - finalizedSlot - 1
-	return relIndex < types.BitlistLen(state.JustifiedSlots) &&
-		types.BitlistGet(state.JustifiedSlots, relIndex)
+	trackedLen := types.BitlistLen(state.JustifiedSlots)
+	if relIndex >= trackedLen {
+		return false, &JustifiedSlotOutOfRangeError{
+			Slot:              slot,
+			FinalizedBoundary: finalizedSlot,
+			TrackedLength:     trackedLen,
+		}
+	}
+	return types.BitlistGet(state.JustifiedSlots, relIndex), nil
 }
 
 func setSlotJustified(state *types.State, finalizedSlot, slot uint64) {

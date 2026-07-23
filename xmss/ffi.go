@@ -41,36 +41,48 @@ package xmss
 // KeyPair* hashsig_keypair_generate(const char* seed_phrase,
 //     size_t activation_epoch, size_t num_active_epochs);
 //
-// void xmss_setup_prover();
-// void xmss_setup_verifier();
+// int32_t xmss_setup_prover();
+// int32_t xmss_setup_verifier();
 //
-// typedef struct AggregatedXMSS AggregatedXMSS;
-//
-// const AggregatedXMSS* xmss_aggregate(
+// int32_t xmss_aggregate_type_1(
 //     const PublicKey* const* raw_pub_keys,
 //     const Signature* const* raw_signatures,
 //     size_t num_raw,
-//     size_t num_children,
 //     const PublicKey* const* child_all_pub_keys,
 //     const size_t* child_num_keys,
 //     const uint8_t* const* child_proof_ptrs,
 //     const size_t* child_proof_lens,
+//     size_t num_children,
 //     const uint8_t* message_hash_ptr,
 //     uint32_t slot,
-//     size_t log_inv_rate);
+//     size_t log_inv_rate,
+//     uint8_t* out_buf, size_t out_cap, size_t* out_written);
 //
-// bool xmss_verify_aggregated(
+// bool xmss_verify_type_1(
 //     const PublicKey* const* public_keys, size_t num_keys,
 //     const uint8_t* message_hash_ptr,
-//     const uint8_t* agg_sig_bytes, size_t agg_sig_len,
-//     uint32_t epoch);
+//     uint32_t slot,
+//     const uint8_t* proof, size_t proof_len);
 //
-// void xmss_free_aggregate_signature(AggregatedXMSS* agg_sig);
-// size_t xmss_aggregate_signature_to_bytes(
-//     const AggregatedXMSS* agg_sig,
-//     uint8_t* buffer, size_t buffer_len);
-// AggregatedXMSS* xmss_aggregate_signature_from_bytes(
-//     const uint8_t* bytes, size_t bytes_len);
+// int32_t xmss_merge_type_1_to_type_2(
+//     const uint8_t* const* proof_ptrs, const size_t* proof_lens,
+//     const PublicKey* const* pubkeys, const size_t* pubkey_counts,
+//     size_t count, size_t log_inv_rate,
+//     uint8_t* out_buf, size_t out_cap, size_t* out_written);
+//
+// int32_t xmss_split_type_2_by_message(
+//     const uint8_t* proof, size_t proof_len,
+//     const PublicKey* const* pubkeys, const size_t* pubkey_counts,
+//     size_t count, const uint8_t* target_message, size_t log_inv_rate,
+//     uint8_t* out_buf, size_t out_cap, size_t* out_written);
+//
+// bool xmss_verify_type_2(
+//     const uint8_t* proof, size_t proof_len,
+//     const PublicKey* const* pubkeys, const size_t* pubkey_counts,
+//     size_t count, const uint8_t* message_hashes, const uint32_t* message_slots);
+//
+// int32_t poseidon_permute_kb16(uint32_t* state, size_t len);
+// int32_t poseidon_permute_kb24(uint32_t* state, size_t len);
 import "C"
 
 import (
@@ -85,7 +97,7 @@ import (
 
 const (
 	MessageLength    = 32
-	MaxProofSize     = 1 << 20
+	MaxProofSize     = 1 << 19
 	SignatureBuffer  = 4000
 	PubkeyBuffer     = 256
 	PrivateKeyBuffer = 10 << 20
@@ -96,7 +108,7 @@ var (
 	ErrCountMismatch       = errors.New("public key count does not match signature count")
 	ErrAggregationFailed   = errors.New("signature aggregation failed")
 	ErrSerializationFailed = errors.New("proof serialization failed")
-	ErrProofTooBig         = errors.New("aggregated proof exceeds 1 MiB")
+	ErrProofTooBig         = errors.New("aggregated proof exceeds 512 KiB")
 	ErrVerificationFailed  = errors.New("aggregated signature verification failed")
 	ErrDeserializeFailed   = errors.New("proof deserialization failed")
 	ErrSigningFailed       = errors.New("signing failed")
@@ -106,23 +118,54 @@ var (
 	ErrKeypairParseFailed  = errors.New("keypair parsing failed")
 	ErrMalformedChildProof = errors.New("malformed child proof")
 	ErrMalformedRawInput   = errors.New("malformed raw signature input")
+	ErrSetupFailed         = errors.New("XMSS setup failed")
+	ErrPoseidonWidth       = errors.New("poseidon permutation width must be 16 or 24")
+	ErrPoseidonPermute     = errors.New("poseidon permutation failed")
 )
+
+// Poseidon2Permute applies the KoalaBear Poseidon permutation in place. The
+// state holds canonical field-element values; width must be 16 or 24.
+func Poseidon2Permute(state []uint32) error {
+	if len(state) != 16 && len(state) != 24 {
+		return ErrPoseidonWidth
+	}
+	ptr := (*C.uint32_t)(unsafe.Pointer(&state[0]))
+	n := C.size_t(len(state))
+	var status C.int32_t
+	if len(state) == 16 {
+		status = C.poseidon_permute_kb16(ptr, n)
+	} else {
+		status = C.poseidon_permute_kb24(ptr, n)
+	}
+	if status != 0 {
+		return ErrPoseidonPermute
+	}
+	return nil
+}
 
 var (
 	proverOnce   sync.Once
 	verifierOnce sync.Once
 )
 
-func EnsureProverReady() {
+var proverErr, verifierErr error
+
+func EnsureProverReady() error {
 	proverOnce.Do(func() {
-		C.xmss_setup_prover()
+		if C.xmss_setup_prover() != 0 {
+			proverErr = ErrSetupFailed
+		}
 	})
+	return proverErr
 }
 
-func EnsureVerifierReady() {
+func EnsureVerifierReady() error {
 	verifierOnce.Do(func() {
-		C.xmss_setup_verifier()
+		if C.xmss_setup_verifier() != 0 {
+			verifierErr = ErrSetupFailed
+		}
 	})
+	return verifierErr
 }
 
 func VerifySignatureSSZ(pubkey [types.PubkeySize]byte, slot uint32, message [32]byte, signature [types.SignatureSize]byte) (bool, error) {
@@ -144,8 +187,8 @@ func VerifySignatureSSZ(pubkey [types.PubkeySize]byte, slot uint32, message [32]
 }
 
 type ChildProof struct {
-	Pubkeys   []CPubKey
-	ProofData []byte
+	Pubkeys []CPubKey
+	Proof   []byte
 }
 
 const LogInvRate = 2
@@ -185,7 +228,9 @@ func AggregateWithChildren(
 		return nil, err
 	}
 
-	EnsureProverReady()
+	if err := EnsureProverReady(); err != nil {
+		return nil, err
+	}
 
 	// Pin Go memory passed to C. Go 1.21+ cgo checks reject passing slices
 	// containing Go pointers unless the backing memory is pinned.
@@ -225,9 +270,9 @@ func AggregateWithChildren(
 			for _, pk := range child.Pubkeys {
 				allChildPks = append(allChildPks, (*C.PublicKey)(pk))
 			}
-			pinner.Pin(&child.ProofData[0])
-			childProofPtrs[i] = (*C.uint8_t)(unsafe.Pointer(&child.ProofData[0]))
-			childProofLens[i] = C.size_t(len(child.ProofData))
+			pinner.Pin(&child.Proof[0])
+			childProofPtrs[i] = (*C.uint8_t)(unsafe.Pointer(&child.Proof[0]))
+			childProofLens[i] = C.size_t(len(child.Proof))
 		}
 
 		if len(allChildPks) > 0 {
@@ -240,43 +285,41 @@ func AggregateWithChildren(
 		childProofLensPtr = (*C.size_t)(unsafe.Pointer(&childProofLens[0]))
 	}
 
-	aggSig := C.xmss_aggregate(
+	bufPtr := getProofBuf()
+	defer putProofBuf(bufPtr)
+	buf := *bufPtr
+	var written C.size_t
+	status := C.xmss_aggregate_type_1(
 		rawPkPtr,
 		rawSigPtr,
 		C.size_t(numRaw),
-		C.size_t(numChildren),
 		childAllPkPtr,
 		childNumKeysPtr,
 		childProofPtrsPtr,
 		childProofLensPtr,
+		C.size_t(numChildren),
 		(*C.uint8_t)(unsafe.Pointer(&message[0])),
 		C.uint32_t(slot),
 		C.size_t(LogInvRate),
-	)
-	if aggSig == nil {
-		return nil, ErrAggregationFailed
-	}
-	defer C.xmss_free_aggregate_signature((*C.AggregatedXMSS)(unsafe.Pointer(aggSig)))
-
-	bufPtr := getProofBuf()
-	buf := *bufPtr
-	n := C.xmss_aggregate_signature_to_bytes(
-		aggSig,
 		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
 		C.size_t(len(buf)),
+		&written,
 	)
-	if n == 0 {
-		putProofBuf(bufPtr)
+	if status != 0 {
+		if status == -2 || int(written) > MaxProofSize {
+			return nil, ErrProofTooBig
+		}
+		return nil, ErrAggregationFailed
+	}
+	if written == 0 {
 		return nil, ErrSerializationFailed
 	}
-	if int(n) > MaxProofSize {
-		putProofBuf(bufPtr)
+	if int(written) > MaxProofSize {
 		return nil, ErrProofTooBig
 	}
 
-	result := make([]byte, int(n))
-	copy(result, buf[:n])
-	putProofBuf(bufPtr)
+	result := make([]byte, int(written))
+	copy(result, buf[:written])
 	return result, nil
 }
 
@@ -306,7 +349,7 @@ func validateChildProofs(children []ChildProof) error {
 		if len(child.Pubkeys) == 0 {
 			return fmt.Errorf("%w: child %d has no pubkeys", ErrMalformedChildProof, i)
 		}
-		if len(child.ProofData) == 0 {
+		if len(child.Proof) == 0 {
 			return fmt.Errorf("%w: child %d proof data is empty", ErrMalformedChildProof, i)
 		}
 		for j, pk := range child.Pubkeys {
@@ -331,7 +374,12 @@ func VerifyAggregatedSignature(
 		return err
 	}
 
-	EnsureVerifierReady()
+	if len(proofData) > MaxProofSize {
+		return ErrProofTooBig
+	}
+	if err := EnsureVerifierReady(); err != nil {
+		return err
+	}
 
 	cPubkeys := make([]*C.PublicKey, len(pubkeys))
 	for i, pk := range pubkeys {
@@ -342,19 +390,205 @@ func VerifyAggregatedSignature(
 	defer pinner.Unpin()
 	pinner.Pin(&cPubkeys[0])
 
-	valid := C.xmss_verify_aggregated(
+	valid := C.xmss_verify_type_1(
 		(**C.PublicKey)(unsafe.Pointer(&cPubkeys[0])),
 		C.size_t(len(cPubkeys)),
 		(*C.uint8_t)(unsafe.Pointer(&message[0])),
+		C.uint32_t(slot),
 		(*C.uint8_t)(unsafe.Pointer(&proofData[0])),
 		C.size_t(len(proofData)),
-		C.uint32_t(slot),
 	)
 	if !valid {
 		return ErrVerificationFailed
 	}
 
 	return nil
+}
+
+type Type1Input struct {
+	Pubkeys []CPubKey
+	Proof   []byte
+}
+
+type MessageBinding struct {
+	Message [MessageLength]byte
+	Slot    uint32
+}
+
+func MergeType1Proofs(inputs []Type1Input) ([]byte, error) {
+	if len(inputs) == 0 {
+		return nil, ErrEmptyInput
+	}
+	if err := EnsureProverReady(); err != nil {
+		return nil, err
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	proofPtrs := make([]*C.uint8_t, len(inputs))
+	proofLens := make([]C.size_t, len(inputs))
+	keyCounts := make([]C.size_t, len(inputs))
+	var keys []*C.PublicKey
+	for i, input := range inputs {
+		if len(input.Proof) == 0 || len(input.Proof) > MaxProofSize {
+			return nil, ErrMalformedChildProof
+		}
+		if err := validatePublicKeys(input.Pubkeys); err != nil {
+			return nil, err
+		}
+		pinner.Pin(&input.Proof[0])
+		proofPtrs[i] = (*C.uint8_t)(unsafe.Pointer(&input.Proof[0]))
+		proofLens[i] = C.size_t(len(input.Proof))
+		keyCounts[i] = C.size_t(len(input.Pubkeys))
+		for _, key := range input.Pubkeys {
+			keys = append(keys, (*C.PublicKey)(key))
+		}
+	}
+	if len(keys) == 0 {
+		return nil, ErrEmptyInput
+	}
+	pinner.Pin(&proofPtrs[0])
+	pinner.Pin(&keys[0])
+
+	bufPtr := getProofBuf()
+	defer putProofBuf(bufPtr)
+	buf := *bufPtr
+	var written C.size_t
+	status := C.xmss_merge_type_1_to_type_2(
+		(**C.uint8_t)(unsafe.Pointer(&proofPtrs[0])),
+		(*C.size_t)(unsafe.Pointer(&proofLens[0])),
+		(**C.PublicKey)(unsafe.Pointer(&keys[0])),
+		(*C.size_t)(unsafe.Pointer(&keyCounts[0])),
+		C.size_t(len(inputs)),
+		C.size_t(LogInvRate),
+		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
+		C.size_t(len(buf)),
+		&written,
+	)
+	return proofResult(status, written, buf)
+}
+
+func SplitType2Proof(
+	proof []byte,
+	pubkeys [][]CPubKey,
+	target [MessageLength]byte,
+) ([]byte, error) {
+	if len(proof) == 0 || len(pubkeys) == 0 {
+		return nil, ErrEmptyInput
+	}
+	if len(proof) > MaxProofSize {
+		return nil, ErrProofTooBig
+	}
+	if err := EnsureProverReady(); err != nil {
+		return nil, err
+	}
+
+	keys, counts, err := flattenPublicKeys(pubkeys)
+	if err != nil {
+		return nil, err
+	}
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&proof[0])
+	pinner.Pin(&keys[0])
+
+	bufPtr := getProofBuf()
+	defer putProofBuf(bufPtr)
+	buf := *bufPtr
+	var written C.size_t
+	status := C.xmss_split_type_2_by_message(
+		(*C.uint8_t)(unsafe.Pointer(&proof[0])),
+		C.size_t(len(proof)),
+		(**C.PublicKey)(unsafe.Pointer(&keys[0])),
+		(*C.size_t)(unsafe.Pointer(&counts[0])),
+		C.size_t(len(pubkeys)),
+		(*C.uint8_t)(unsafe.Pointer(&target[0])),
+		C.size_t(LogInvRate),
+		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
+		C.size_t(len(buf)),
+		&written,
+	)
+	return proofResult(status, written, buf)
+}
+
+func VerifyType2Proof(
+	proof []byte,
+	pubkeys [][]CPubKey,
+	bindings []MessageBinding,
+) error {
+	if len(proof) == 0 || len(pubkeys) == 0 || len(pubkeys) != len(bindings) {
+		return ErrCountMismatch
+	}
+	if len(proof) > MaxProofSize {
+		return ErrProofTooBig
+	}
+	if err := EnsureVerifierReady(); err != nil {
+		return err
+	}
+	keys, counts, err := flattenPublicKeys(pubkeys)
+	if err != nil {
+		return err
+	}
+
+	hashes := make([]byte, 0, len(bindings)*MessageLength)
+	slots := make([]C.uint32_t, len(bindings))
+	for i, binding := range bindings {
+		hashes = append(hashes, binding.Message[:]...)
+		slots[i] = C.uint32_t(binding.Slot)
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(&proof[0])
+	pinner.Pin(&keys[0])
+	pinner.Pin(&hashes[0])
+
+	if !C.xmss_verify_type_2(
+		(*C.uint8_t)(unsafe.Pointer(&proof[0])),
+		C.size_t(len(proof)),
+		(**C.PublicKey)(unsafe.Pointer(&keys[0])),
+		(*C.size_t)(unsafe.Pointer(&counts[0])),
+		C.size_t(len(pubkeys)),
+		(*C.uint8_t)(unsafe.Pointer(&hashes[0])),
+		(*C.uint32_t)(unsafe.Pointer(&slots[0])),
+	) {
+		return ErrVerificationFailed
+	}
+	return nil
+}
+
+func flattenPublicKeys(groups [][]CPubKey) ([]*C.PublicKey, []C.size_t, error) {
+	counts := make([]C.size_t, len(groups))
+	var keys []*C.PublicKey
+	for i, group := range groups {
+		if len(group) == 0 {
+			return nil, nil, ErrEmptyInput
+		}
+		if err := validatePublicKeys(group); err != nil {
+			return nil, nil, err
+		}
+		counts[i] = C.size_t(len(group))
+		for _, key := range group {
+			keys = append(keys, (*C.PublicKey)(key))
+		}
+	}
+	return keys, counts, nil
+}
+
+func proofResult(status C.int32_t, written C.size_t, buf []byte) ([]byte, error) {
+	if status != 0 {
+		if status == -2 || int(written) > MaxProofSize {
+			return nil, ErrProofTooBig
+		}
+		return nil, ErrAggregationFailed
+	}
+	if written == 0 {
+		return nil, ErrSerializationFailed
+	}
+	result := make([]byte, int(written))
+	copy(result, buf[:written])
+	return result, nil
 }
 
 type CPubKey = unsafe.Pointer

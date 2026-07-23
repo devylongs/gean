@@ -121,8 +121,8 @@ func TestValidatorDualKeysIndependent(t *testing.T) {
 }
 
 func TestMaxAttestationsDataConstant(t *testing.T) {
-	if MaxAttestationsData != 16 {
-		t.Fatalf("MaxAttestationsData: expected 16, got %d", MaxAttestationsData)
+	if MaxAttestationsData != 8 {
+		t.Fatalf("MaxAttestationsData: expected 8, got %d", MaxAttestationsData)
 	}
 }
 

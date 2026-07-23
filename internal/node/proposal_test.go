@@ -1,8 +1,10 @@
 package node
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/geanlabs/gean/internal/statetransition"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 )
@@ -51,9 +53,9 @@ func TestProduceBlockWithSignaturesDoesNotPromoteNewPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hash attestation data: %v", err)
 	}
-	s.NewPayloads.Push(dataRoot, data, &types.AggregatedSignatureProof{
+	s.NewPayloads.Push(dataRoot, data, &types.SingleMessageAggregate{
 		Participants: types.BitlistFromIndices([]uint64{0}),
-		ProofData:    []byte{0x01},
+		Proof:        []byte{0x01},
 	})
 
 	e := &Engine{Store: s}
@@ -76,7 +78,7 @@ func TestPayloadsFromEntriesCopiesMapAndProofSlice(t *testing.T) {
 	root := [32]byte{0x01}
 	entry := &store.PayloadEntry{
 		Data:   &types.AttestationData{Head: &types.Checkpoint{}, Source: &types.Checkpoint{}, Target: &types.Checkpoint{}},
-		Proofs: []*types.AggregatedSignatureProof{{Participants: types.BitlistFromIndices([]uint64{1})}},
+		Proofs: []*types.SingleMessageAggregate{{Participants: types.BitlistFromIndices([]uint64{1})}},
 	}
 	original := map[[32]byte]*store.PayloadEntry{
 		root: entry,
@@ -95,6 +97,36 @@ func TestPayloadsFromEntriesCopiesMapAndProofSlice(t *testing.T) {
 
 	if copied[0].DataRoot != root || copied[0].Data == nil {
 		t.Fatal("copied payload lost entry after original map mutation")
+	}
+}
+
+func TestProduceBlockWithSignaturesStaleHeadReturnsSlotError(t *testing.T) {
+	s := makeTestStore()
+	headState, parentRoot := proposalHeadState(t)
+	headState.Slot = 1
+	s.SetHead(parentRoot)
+	s.InsertState(parentRoot, headState)
+	s.InsertBlockHeader(parentRoot, headState.LatestBlockHeader)
+
+	e := &Engine{Store: s}
+	_, _, err := e.produceBlockWithSignatures(1, 0)
+	var stale *statetransition.StateSlotIsNewerError
+	if !errors.As(err, &stale) {
+		t.Fatalf("err=%v, want StateSlotIsNewerError", err)
+	}
+}
+
+func TestBuildProposalSkipsStaleSlot(t *testing.T) {
+	s := makeTestStore()
+	headState, parentRoot := proposalHeadState(t)
+	headState.Slot = 1
+	s.SetHead(parentRoot)
+	s.InsertState(parentRoot, headState)
+	s.InsertBlockHeader(parentRoot, headState.LatestBlockHeader)
+
+	e := &Engine{Store: s}
+	if result := e.buildProposal(1, 0); result != nil {
+		t.Fatalf("buildProposal result=%v, want nil (skipped)", result)
 	}
 }
 

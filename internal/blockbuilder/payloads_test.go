@@ -16,8 +16,8 @@ func TestSortedPayloadsSkipsMalformedEntries(t *testing.T) {
 	payloads := []AttestationPayload{
 		{DataRoot: [32]byte{0x01}},
 		{DataRoot: [32]byte{0x02}, Data: nil},
-		{DataRoot: [32]byte{0x03}, Data: &types.AttestationData{Head: &types.Checkpoint{}, Source: &types.Checkpoint{}}, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})}},
-		{DataRoot: validRoot, Data: validData, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})}},
+		{DataRoot: [32]byte{0x03}, Data: &types.AttestationData{Head: &types.Checkpoint{}, Source: &types.Checkpoint{}}, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})}},
+		{DataRoot: validRoot, Data: validData, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})}},
 	}
 
 	sorted, payloadErrors := sortedPayloads(payloads)
@@ -56,21 +56,21 @@ func TestValidatePayloadRejectsMalformedFields(t *testing.T) {
 			name: "nil head",
 			payload: AttestationPayload{
 				Data:   &types.AttestationData{Source: &types.Checkpoint{}, Target: &types.Checkpoint{}},
-				Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})},
+				Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})},
 			},
 		},
 		{
 			name: "nil target",
 			payload: AttestationPayload{
 				Data:   &types.AttestationData{Head: &types.Checkpoint{}, Source: &types.Checkpoint{}},
-				Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})},
+				Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})},
 			},
 		},
 		{
 			name: "nil source",
 			payload: AttestationPayload{
 				Data:   &types.AttestationData{Head: &types.Checkpoint{}, Target: &types.Checkpoint{}},
-				Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})},
+				Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})},
 			},
 		},
 	}
@@ -88,7 +88,7 @@ func TestSortedPayloadsReportsMismatchedDataRoot(t *testing.T) {
 	payloads := []AttestationPayload{{
 		DataRoot: [32]byte{0x04},
 		Data:     mockAttestationData(),
-		Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{1})},
+		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{1})},
 	}}
 
 	sorted, payloadErrors := sortedPayloads(payloads)
@@ -118,9 +118,9 @@ func TestSortedPayloadsOrdersByTargetSlotThenRoot(t *testing.T) {
 	rightRoot := hashAttestationData(t, highRight)
 
 	sorted, payloadErrors := sortedPayloads([]AttestationPayload{
-		{DataRoot: rightRoot, Data: highRight, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})}},
-		{DataRoot: leftRoot, Data: highLeft, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})}},
-		{DataRoot: lowRoot, Data: lowSlot, Proofs: []*types.AggregatedSignatureProof{mockProof([]uint64{1})}},
+		{DataRoot: rightRoot, Data: highRight, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})}},
+		{DataRoot: leftRoot, Data: highLeft, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})}},
+		{DataRoot: lowRoot, Data: lowSlot, Proofs: []*types.SingleMessageAggregate{mockProof([]uint64{1})}},
 	})
 
 	if len(payloadErrors) != 0 {
@@ -145,7 +145,7 @@ func TestSortedPayloadsMergesDuplicateRoots(t *testing.T) {
 	first := AttestationPayload{
 		DataRoot: root,
 		Data:     data,
-		Proofs:   []*types.AggregatedSignatureProof{firstProof},
+		Proofs:   []*types.SingleMessageAggregate{firstProof},
 	}
 
 	sorted, payloadErrors := sortedPayloads([]AttestationPayload{
@@ -153,7 +153,7 @@ func TestSortedPayloadsMergesDuplicateRoots(t *testing.T) {
 		{
 			DataRoot: root,
 			Data:     data,
-			Proofs:   []*types.AggregatedSignatureProof{secondProof},
+			Proofs:   []*types.SingleMessageAggregate{secondProof},
 		},
 	})
 
@@ -186,7 +186,7 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 	payload := AttestationPayload{
 		DataRoot: dataRoot,
 		Data:     data,
-		Proofs:   []*types.AggregatedSignatureProof{mockProof([]uint64{0})},
+		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 	}
 	knownRoots := map[[32]byte]bool{parentRoot: true}
 	if err := payloadBuildIssue(workingState, knownRoots, payload); err != nil {
@@ -199,11 +199,35 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		t.Fatalf("head unknown skip was not marked expected: %v", err)
 	}
 
+	// Head known but off the canonical chain (a forked block) must be dropped,
+	// matching the spec proposer; expected skip, not a hard error.
+	offHead := *data
+	forkHead := [32]byte{0xfe}
+	offHead.Head = &types.Checkpoint{Slot: data.Head.Slot, Root: forkHead}
+	if err := payloadBuildIssue(workingState, map[[32]byte]bool{parentRoot: true, forkHead: true},
+		AttestationPayload{DataRoot: dataRoot, Data: &offHead, Proofs: payload.Proofs}); !errors.Is(err, ErrPayloadHeadOffChain) {
+		t.Fatalf("payload build issue=%v, want ErrPayloadHeadOffChain", err)
+	} else if !IsExpectedSkip(err) {
+		t.Fatalf("off-chain head skip was not marked expected: %v", err)
+	}
+
 	sameSlot := *data
 	sameSlot.Target = &types.Checkpoint{Slot: data.Source.Slot, Root: data.Source.Root}
 	payload.Data = &sameSlot
 	if err := payloadBuildIssue(workingState, knownRoots, payload); !errors.Is(err, ErrPayloadVoteInvalid) {
 		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
+	}
+
+	// Chain mismatch must be tested before any slot is justified below, since
+	// leanSpec checks target justification ahead of chain membership: an
+	// already-justified target would otherwise mask the mismatch as an expected skip.
+	wrongRoot := *data
+	wrongRoot.Target = &types.Checkpoint{Slot: data.Target.Slot, Root: [32]byte{0x99}}
+	payload.Data = &wrongRoot
+	if err := payloadBuildIssue(workingState, knownRoots, payload); !errors.Is(err, ErrPayloadVoteInvalid) {
+		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
+	} else if IsExpectedSkip(err) {
+		t.Fatalf("chain mismatch was marked expected: %v", err)
 	}
 
 	alreadyJustified := *data
@@ -216,15 +240,6 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		t.Fatalf("already-justified vote was not marked expected: %v", err)
 	}
 
-	wrongRoot := *data
-	wrongRoot.Target = &types.Checkpoint{Slot: data.Target.Slot, Root: [32]byte{0x99}}
-	payload.Data = &wrongRoot
-	if err := payloadBuildIssue(workingState, knownRoots, payload); !errors.Is(err, ErrPayloadVoteInvalid) {
-		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
-	} else if IsExpectedSkip(err) {
-		t.Fatalf("chain mismatch was marked expected: %v", err)
-	}
-
 	farState, err := workingState.Clone()
 	if err != nil {
 		t.Fatalf("clone working state: %v", err)
@@ -234,6 +249,9 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		farState.HistoricalBlockHashes = append(farState.HistoricalBlockHashes, make([]byte, types.RootSize))
 	}
 	farState.HistoricalBlockHashes[7] = copyRoot(farRoot)
+	// Grow the justification window alongside the chain so slot 7 is in range and
+	// the vote is rejected as not-justifiable rather than out-of-range.
+	farState.JustifiedSlots = types.BitlistExtend(farState.JustifiedSlots, 7)
 
 	farTarget := *data
 	farTarget.Target = &types.Checkpoint{Slot: 7, Root: farRoot}
@@ -242,5 +260,53 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		t.Fatalf("payload build issue=%v, want ErrPayloadVoteInvalid", err)
 	} else if !IsExpectedSkip(err) {
 		t.Fatalf("not-justifiable vote was not marked expected: %v", err)
+	}
+}
+
+func TestPayloadBuildIssueSkipsStaleSource(t *testing.T) {
+	headState, parentRoot, data, dataRoot := postHeaderVoteInput(t)
+	workingState, err := transitionBlock(headState, 3, newBlock(3, 0, parentRoot, nil))
+	if err != nil {
+		t.Fatalf("transition header: %v", err)
+	}
+
+	// workingState is justified at slot 1; a vote sourcing at slot 0 no longer
+	// matches the current justified checkpoint and is an expected skip.
+	staleSource := *data
+	staleSource.Source = &types.Checkpoint{Slot: 0, Root: data.Head.Root}
+	payload := AttestationPayload{
+		DataRoot: dataRoot,
+		Data:     &staleSource,
+		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
+	}
+	err = payloadBuildIssue(workingState, map[[32]byte]bool{parentRoot: true}, payload)
+	if !errors.Is(err, ErrPayloadSourceNotCurrentJustified) {
+		t.Fatalf("payload build issue=%v, want ErrPayloadSourceNotCurrentJustified", err)
+	}
+	if !IsExpectedSkip(err) {
+		t.Fatalf("stale source skip was not marked expected: %v", err)
+	}
+}
+
+func TestPayloadBuildIssueAllowsGenesisSelfVote(t *testing.T) {
+	root := [32]byte{1}
+	state := &types.State{
+		LatestFinalized:       &types.Checkpoint{Root: root},
+		HistoricalBlockHashes: [][]byte{append([]byte(nil), root[:]...)},
+		JustifiedSlots:        types.NewBitlistSSZ(0),
+	}
+	data := &types.AttestationData{
+		Head:   &types.Checkpoint{Root: root},
+		Source: &types.Checkpoint{Root: root},
+		Target: &types.Checkpoint{Root: root},
+	}
+	dataRoot := hashAttestationData(t, data)
+	err := payloadBuildIssue(state, map[[32]byte]bool{root: true}, AttestationPayload{
+		DataRoot: dataRoot,
+		Data:     data,
+		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
+	})
+	if err != nil {
+		t.Fatalf("genesis self-vote rejected: %v", err)
 	}
 }

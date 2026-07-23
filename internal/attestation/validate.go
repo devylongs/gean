@@ -48,6 +48,22 @@ func errAttestationTooFarInFuture(attSlot, storeTime uint64) error {
 	return &store.StoreError{Kind: store.ErrAttestationTooFarInFuture, Message: fmt.Sprintf("attestation slot %d too far in future (store time %d intervals)", attSlot, storeTime)}
 }
 
+func errAttestationSlotBeforeHead(attSlot, headSlot uint64) error {
+	return &store.StoreError{Kind: store.ErrAttestationSlotBeforeHead, Message: fmt.Sprintf("attestation slot %d precedes head slot %d", attSlot, headSlot)}
+}
+
+func errSourceNotAncestorOfTarget() error {
+	return &store.StoreError{Kind: store.ErrSourceNotAncestorOfTarget, Message: "source checkpoint is not an ancestor of target"}
+}
+
+func errTargetNotAncestorOfHead() error {
+	return &store.StoreError{Kind: store.ErrTargetNotAncestorOfHead, Message: "target checkpoint is not an ancestor of head"}
+}
+
+func errHeadNotDescendantOfFinalized() error {
+	return &store.StoreError{Kind: store.ErrHeadNotDescendantOfFinalized, Message: "head checkpoint does not descend from the finalized block"}
+}
+
 func ValidateAttestationData(s *store.ConsensusStore, data *types.AttestationData) error {
 	if err := validateDataShape(data); err != nil {
 		return err
@@ -81,12 +97,53 @@ func ValidateAttestationData(s *store.ConsensusStore, data *types.AttestationDat
 	if headHeader.Slot != data.Head.Slot {
 		return errHeadSlotMismatch(data.Head.Slot, headHeader.Slot)
 	}
+	if !checkpointIsAncestor(s, data.Source, data.Target) {
+		return errSourceNotAncestorOfTarget()
+	}
+	if !checkpointIsAncestor(s, data.Target, data.Head) {
+		return errTargetNotAncestorOfHead()
+	}
+	// Fork choice only ever descends from the finalized block, so an orphaned head
+	// carries no weight. Rejecting it at admission mirrors the prune predicate and
+	// keeps a re-gossiped below-finalized aggregate from re-entering the pool.
+	if finalized := s.LatestFinalized(); finalized != nil && !checkpointIsAncestor(s, finalized, data.Head) {
+		return errHeadNotDescendantOfFinalized()
+	}
+	// A vote cannot have observed its head before that head existed. This lower
+	// bound also keeps the wire slot clear of the 2**64 interval-multiply overflow.
+	if data.Slot < data.Head.Slot {
+		return errAttestationSlotBeforeHead(data.Slot, data.Head.Slot)
+	}
 	if data.Slot > math.MaxUint64/types.IntervalsPerSlot ||
 		data.Slot*types.IntervalsPerSlot > s.Time()+types.GossipDisparityIntervals {
 		return errAttestationTooFarInFuture(data.Slot, s.Time())
 	}
 
 	return nil
+}
+
+// checkpointIsAncestor reports whether ancestor lies on descendant's parent
+// chain. Mirrors leanSpec _checkpoint_is_ancestor: climb parent links from the
+// descendant; the ancestor's slot must carry its exact root, otherwise the two
+// checkpoints sit on forked branches.
+func checkpointIsAncestor(s *store.ConsensusStore, ancestor, descendant *types.Checkpoint) bool {
+	if ancestor.Slot > descendant.Slot {
+		return false
+	}
+	current := descendant.Root
+	for {
+		header := s.GetBlockHeader(current)
+		if header == nil {
+			return false
+		}
+		if header.Slot == ancestor.Slot {
+			return current == ancestor.Root
+		}
+		if header.Slot < ancestor.Slot {
+			return false
+		}
+		current = header.ParentRoot
+	}
 }
 
 func validateDataShape(data *types.AttestationData) error {

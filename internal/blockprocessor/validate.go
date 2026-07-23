@@ -27,15 +27,22 @@ func validateSignedBlock(signedBlock *types.SignedBlock, verify bool) (*types.Bl
 	if signedBlock.Block.Body == nil {
 		return nil, fmt.Errorf("malformed block: body is nil")
 	}
-	if verify && signedBlock.Signature == nil {
+	if verify && (signedBlock.Proof == nil || len(signedBlock.Proof.Proof) == 0) {
 		return nil, &store.StoreError{
 			Kind:    store.ErrAttestationSignatureMismatch,
-			Message: "block signatures missing",
+			Message: "block proof missing",
 		}
+	}
+	if signedBlock.Proof != nil && len(signedBlock.Proof.Proof) > types.ByteList512KiBMax {
+		return nil, fmt.Errorf("block proof exceeds %d bytes", types.ByteList512KiBMax)
 	}
 	return signedBlock.Block, nil
 }
 
+// validateBlockAttestations enforces the wire-level prohibition on exact-duplicate
+// AttestationData. The per-block cap on the distinct-data count lives in the state
+// transition, where it binds every caller; split aggregates sharing one data entry
+// are a legitimate, idempotently merged input and so are not rejected here.
 func validateBlockAttestations(block *types.Block) error {
 	seen := make(map[[32]byte]bool)
 	for _, att := range block.Body.Attestations {
@@ -54,13 +61,6 @@ func validateBlockAttestations(block *types.Block) error {
 			}
 		}
 		seen[dataRoot] = true
-	}
-
-	if len(seen) > int(types.MaxAttestationsData) {
-		return &store.StoreError{
-			Kind:    store.ErrTooManyAttestationData,
-			Message: fmt.Sprintf("block has %d distinct AttestationData (max %d)", len(seen), types.MaxAttestationsData),
-		}
 	}
 	return nil
 }
