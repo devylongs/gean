@@ -10,6 +10,14 @@ type StateTransitionFixture struct {
 	Post                   *TestPostState `json:"post"`
 	ExpectException        string         `json:"expectException"`
 	ExpectExceptionMessage string         `json:"expectExceptionMessage"`
+	RejectionReason        string         `json:"rejectionReason"`
+}
+
+func (f *StateTransitionFixture) ExpectedException() string {
+	if f.ExpectException != "" {
+		return f.ExpectException
+	}
+	return f.RejectionReason
 }
 
 type TestState struct {
