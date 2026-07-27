@@ -67,8 +67,13 @@ prover's headroom; override it via the environment if your budget differs.
 ## Current status
 
 Gean tracks Lean Consensus devnet-5. Consensus fixtures are generated from
-`leanSpec@fd7dfd0e85bd83d43e0a6b1bc2bfafb1ea3049d5` with
-leanVM/leanMultisig `8fcbd77958a58666e828315de2d6ce7c93297117`.
+`leanSpec@eca701efeb5931010fe63925cd203c9ee55b2dbc`, which pins
+`lean-multisig-py` v0.0.9. The XMSS FFI builds against
+leanVM `e2592df4e30fdddbbf8ae26a333116c68cec7026`.
+
+`LEAN_SPEC_COMMIT_HASH` in the [`Makefile`](Makefile) is the source of truth for
+the spec version; the leanVM rev is pinned in
+[`xmss/rust/multisig-glue/Cargo.toml`](xmss/rust/multisig-glue/Cargo.toml).
 
 ## Philosophy
 
