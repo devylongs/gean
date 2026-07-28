@@ -7,7 +7,7 @@ import (
 )
 
 func TestProposerSigThroughBlockSSZ(t *testing.T) {
-	kp, err := GenerateKeyPair("block-roundtrip-0", 0, 1<<18)
+	kp, err := GenerateKeyPair("block-roundtrip-0", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("keygen: %v", err)
 	}

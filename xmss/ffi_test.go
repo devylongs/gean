@@ -7,7 +7,7 @@ import (
 )
 
 func TestParsePublicKeyRoundtrip(t *testing.T) {
-	kp, err := GenerateKeyPair("gean-parse-pk-seed", 0, 1<<8)
+	kp, err := GenerateKeyPair("gean-parse-pk-seed", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("key generation failed: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestParsePublicKeyRoundtrip(t *testing.T) {
 }
 
 func TestParseSignatureRoundtrip(t *testing.T) {
-	kp, err := GenerateKeyPair("gean-parse-sig-seed", 0, 1<<8)
+	kp, err := GenerateKeyPair("gean-parse-sig-seed", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("key generation failed: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestParseSignatureRoundtrip(t *testing.T) {
 }
 
 func TestKeyGenerateSignVerifyRoundtrip(t *testing.T) {
-	kp, err := GenerateKeyPair("gean-test-seed-phrase", 0, 1<<8)
+	kp, err := GenerateKeyPair("gean-test-seed-phrase", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("key generation failed: %v", err)
 	}
