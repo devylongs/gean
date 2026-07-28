@@ -1,7 +1,5 @@
 use backend::symmetric::Permutation;
-use backend::{
-    default_koalabear_poseidon1_16, default_koalabear_poseidon1_24, KoalaBear, PrimeField32,
-};
+use backend::{default_koalabear_poseidon1_16, KoalaBear, PrimeField32};
 use lean_multisig::{
     aggregate_single_message_signatures, merge_single_message_aggregates, setup_prover,
     setup_verifier, verify_multi_message_aggregate, verify_single_message_aggregate,
@@ -176,7 +174,7 @@ pub unsafe extern "C" fn xmss_aggregate_type_1(
                     return -1;
                 }
                 let proof = slice::from_raw_parts(proofs[i], lengths[i]);
-                match SingleMessageAggregateSignature::decompress_without_pubkeys(proof, keys) {
+                match SingleMessageAggregateSignature::from_bytes_without_pubkeys(proof, keys) {
                     Some(proof) => children.push(proof),
                     None => return -1,
                 }
@@ -189,7 +187,7 @@ pub unsafe extern "C" fn xmss_aggregate_type_1(
             Ok(Ok(proof)) => proof,
             _ => return -1,
         };
-        write_out(&proof.compress_without_pubkeys(), out, cap, written)
+        write_out(&proof.to_bytes_without_pubkeys(), out, cap, written)
     })
 }
 
@@ -215,14 +213,14 @@ pub unsafe extern "C" fn xmss_verify_type_1(
             Some(keys) => keys,
             None => return false,
         };
-        let proof = match SingleMessageAggregateSignature::decompress_without_pubkeys(
+        let proof = match SingleMessageAggregateSignature::from_bytes_without_pubkeys(
             slice::from_raw_parts(proof, proof_len),
             keys,
         ) {
             Some(proof) => proof,
             None => return false,
         };
-        if proof.info.without_pubkeys.message != message || proof.info.without_pubkeys.slot != slot
+        if proof.info.core.message != message || proof.info.core.slot != slot
         {
             return false;
         }
@@ -263,7 +261,7 @@ pub unsafe extern "C" fn xmss_merge_type_1_to_type_2(
             if proof_ptrs[i].is_null() || proof_lens[i] == 0 {
                 return -1;
             }
-            match SingleMessageAggregateSignature::decompress_without_pubkeys(
+            match SingleMessageAggregateSignature::from_bytes_without_pubkeys(
                 slice::from_raw_parts(proof_ptrs[i], proof_lens[i]),
                 groups[i].clone(),
             ) {
@@ -277,7 +275,7 @@ pub unsafe extern "C" fn xmss_merge_type_1_to_type_2(
             Ok(Ok(proof)) => proof,
             _ => return -1,
         };
-        write_out(&proof.compress_without_pubkeys(), out, cap, written)
+        write_out(&proof.to_bytes_without_pubkeys(), out, cap, written)
     })
 }
 
@@ -302,7 +300,7 @@ pub unsafe extern "C" fn xmss_split_type_2_by_message(
             Some(groups) => groups,
             None => return -1,
         };
-        let proof = match MultiMessageAggregateSignature::decompress_without_pubkeys(
+        let proof = match MultiMessageAggregateSignature::from_bytes_without_pubkeys(
             slice::from_raw_parts(proof, proof_len),
             groups,
         ) {
@@ -320,7 +318,7 @@ pub unsafe extern "C" fn xmss_split_type_2_by_message(
             Ok(Ok(proof)) => proof,
             _ => return -1,
         };
-        write_out(&proof.compress_without_pubkeys(), out, cap, written)
+        write_out(&proof.to_bytes_without_pubkeys(), out, cap, written)
     })
 }
 
@@ -343,7 +341,7 @@ pub unsafe extern "C" fn xmss_verify_type_2(
             Some(groups) => groups,
             None => return false,
         };
-        let proof = match MultiMessageAggregateSignature::decompress_without_pubkeys(
+        let proof = match MultiMessageAggregateSignature::from_bytes_without_pubkeys(
             slice::from_raw_parts(proof, proof_len),
             groups,
         ) {
@@ -358,8 +356,8 @@ pub unsafe extern "C" fn xmss_verify_type_2(
         for i in 0..count {
             let mut expected = [0; MESSAGE_LEN];
             expected.copy_from_slice(&hashes[i * MESSAGE_LEN..(i + 1) * MESSAGE_LEN]);
-            if proof.info[i].without_pubkeys.message != expected
-                || proof.info[i].without_pubkeys.slot != slots[i]
+            if proof.info[i].core.message != expected
+                || proof.info[i].core.slot != slots[i]
             {
                 return false;
             }
@@ -390,20 +388,12 @@ pub unsafe extern "C" fn poseidon_permute_kb16(state: *mut u32, len: usize) -> i
     })
 }
 
+// SPIKE FOLLOW-UP: leanVM's internalized XMSS dropped the width-24 Poseidon permutation
+// (the scheme now hashes only with width-16 `poseidon16_compress`), so there is no upstream
+// constructor to back this. Returns -1 (unsupported) rather than silently mis-permuting.
+// The only consumer is the `poseidon_permutation` spec-vector test; revisit when the leanSpec
+// pin bumps to the new scheme — the vector set is expected to drop width-24 too.
 #[no_mangle]
-pub unsafe extern "C" fn poseidon_permute_kb24(state: *mut u32, len: usize) -> i32 {
-    ffi_guard!(-1, {
-        if state.is_null() || len != 24 {
-            return -1;
-        }
-        let raw = slice::from_raw_parts_mut(state, 24);
-        let mut input = [0u32; 24];
-        input.copy_from_slice(raw);
-        let mut fe = KoalaBear::new_array(input);
-        default_koalabear_poseidon1_24().permute_mut(&mut fe);
-        for (dst, x) in raw.iter_mut().zip(fe.iter()) {
-            *dst = x.as_canonical_u32();
-        }
-        0
-    })
+pub unsafe extern "C" fn poseidon_permute_kb24(_state: *mut u32, _len: usize) -> i32 {
+    -1
 }
