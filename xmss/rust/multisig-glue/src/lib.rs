@@ -220,8 +220,7 @@ pub unsafe extern "C" fn xmss_verify_type_1(
             Some(proof) => proof,
             None => return false,
         };
-        if proof.info.core.message != message || proof.info.core.slot != slot
-        {
+        if proof.info.core.message != message || proof.info.core.slot != slot {
             return false;
         }
         verify_single_message_aggregate(&proof).is_ok()
@@ -356,9 +355,7 @@ pub unsafe extern "C" fn xmss_verify_type_2(
         for i in 0..count {
             let mut expected = [0; MESSAGE_LEN];
             expected.copy_from_slice(&hashes[i * MESSAGE_LEN..(i + 1) * MESSAGE_LEN]);
-            if proof.info[i].core.message != expected
-                || proof.info[i].core.slot != slots[i]
-            {
+            if proof.info[i].core.message != expected || proof.info[i].core.slot != slots[i] {
                 return false;
             }
         }
