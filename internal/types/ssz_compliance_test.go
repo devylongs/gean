@@ -127,12 +127,12 @@ func TestBlockHeaderHashTreeRootCompliance(t *testing.T) {
 	}
 }
 
-// Test Validator hash_tree_root: 2-field container.
-// pubkey (52 bytes) → 2 chunks (32 + 20 padded), then merkleize to get field root.
+// Test Validator hash_tree_root: 3-field container.
+// pubkey (32 bytes) → exactly 1 chunk, so each pubkey field root is the chunk itself.
 func TestValidatorHashTreeRootCompliance(t *testing.T) {
 	v := &Validator{
-		AttestationPubkey: [52]byte{},
-		ProposalPubkey:    [52]byte{},
+		AttestationPubkey: [32]byte{},
+		ProposalPubkey:    [32]byte{},
 		Index:             0,
 	}
 	root, err := v.HashTreeRoot()
@@ -141,10 +141,8 @@ func TestValidatorHashTreeRootCompliance(t *testing.T) {
 	}
 	// 3-field container: attestation_pubkey, proposal_pubkey, index
 	// 3 fields → pad to 4 → depth 2 merkle tree
-	attChunk0 := chunk("")
-	attChunk1 := chunk("")
-	attPubkeyRoot := h(attChunk0, attChunk1)
-	propPubkeyRoot := h(attChunk0, attChunk1) // same (both zero)
+	attPubkeyRoot := chunk("")  // 32-byte vector = single zero chunk, no merkleize
+	propPubkeyRoot := chunk("") // same (both zero)
 	indexRoot := chunk("")
 	// h(h(att_pubkey, prop_pubkey), h(index, zero))
 	expected := h(h(attPubkeyRoot, propPubkeyRoot), h(indexRoot, chunk("")))
@@ -188,7 +186,7 @@ func TestHashTreeRootDeterminism(t *testing.T) {
 		LatestFinalized:          &Checkpoint{Root: [32]byte{0xbb}, Slot: 30},
 		HistoricalBlockHashes:    [][]byte{make([]byte, 32), make([]byte, 32)},
 		JustifiedSlots:           NewBitlistSSZ(100),
-		Validators:               []*Validator{{AttestationPubkey: [52]byte{1}, Index: 0}, {AttestationPubkey: [52]byte{2}, Index: 1}},
+		Validators:               []*Validator{{AttestationPubkey: [32]byte{1}, Index: 0}, {AttestationPubkey: [32]byte{2}, Index: 1}},
 		JustificationsRoots:      [][]byte{make([]byte, 32)},
 		JustificationsValidators: NewBitlistSSZ(10),
 	}
@@ -222,10 +220,10 @@ func TestSSZSizeCompliance(t *testing.T) {
 		t.Fatalf("ChainConfig size: expected 8, got %d", cfg.SizeSSZ())
 	}
 
-	// Validator: 52 (attestation_pubkey) + 52 (proposal_pubkey) + 8 (index) = 112 bytes
+	// Validator: 32 (attestation_pubkey) + 32 (proposal_pubkey) + 8 (index) = 72 bytes
 	v := &Validator{}
-	if v.SizeSSZ() != 112 {
-		t.Fatalf("Validator size: expected 112, got %d", v.SizeSSZ())
+	if v.SizeSSZ() != 72 {
+		t.Fatalf("Validator size: expected 72, got %d", v.SizeSSZ())
 	}
 
 	// BlockHeader: 8+8+32+32+32 = 112 bytes

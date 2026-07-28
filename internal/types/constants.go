@@ -17,8 +17,8 @@ const (
 
 	JustificationValidatorsLimit = HistoricalRootsLimit * ValidatorRegistryLimit
 
-	PubkeySize        = 52
-	SignatureSize     = 2536
+	PubkeySize        = 32
+	SignatureSize     = 1208
 	RootSize          = 32
 	ByteList512KiBMax = 1 << 19
 

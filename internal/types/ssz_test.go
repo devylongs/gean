@@ -69,7 +69,7 @@ func TestBlockHeaderHashTreeRoot(t *testing.T) {
 }
 
 func TestValidatorSSZRoundtrip(t *testing.T) {
-	v := &Validator{AttestationPubkey: [52]byte{1, 2, 3}, ProposalPubkey: [52]byte{4, 5, 6}, Index: 7}
+	v := &Validator{AttestationPubkey: [32]byte{1, 2, 3}, ProposalPubkey: [32]byte{4, 5, 6}, Index: 7}
 	data, err := v.MarshalSSZ()
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestValidatorSSZRoundtrip(t *testing.T) {
 
 func TestValidatorDualKeysIndependent(t *testing.T) {
 	// Verify attestation and proposal keys are stored independently.
-	var attKey, propKey [52]byte
+	var attKey, propKey [32]byte
 	for i := range attKey {
 		attKey[i] = byte(i + 1)
 	}
@@ -98,8 +98,8 @@ func TestValidatorDualKeysIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 112 {
-		t.Fatalf("expected 112 bytes, got %d", len(data))
+	if len(data) != 72 {
+		t.Fatalf("expected 72 bytes, got %d", len(data))
 	}
 
 	v2 := &Validator{}
@@ -194,7 +194,7 @@ func TestStateSSZRoundtrip(t *testing.T) {
 			make([]byte, 32),
 		},
 		JustifiedSlots:           NewBitlistSSZ(10),
-		Validators:               []*Validator{{AttestationPubkey: [52]byte{1}, Index: 0}},
+		Validators:               []*Validator{{AttestationPubkey: [32]byte{1}, Index: 0}},
 		JustificationsRoots:      [][]byte{make([]byte, 32)},
 		JustificationsValidators: NewBitlistSSZ(5),
 	}
@@ -223,7 +223,7 @@ func TestStateHashTreeRoot(t *testing.T) {
 		LatestFinalized:          &Checkpoint{Slot: 3},
 		HistoricalBlockHashes:    [][]byte{make([]byte, 32)},
 		JustifiedSlots:           NewBitlistSSZ(10),
-		Validators:               []*Validator{{AttestationPubkey: [52]byte{1}, Index: 0}},
+		Validators:               []*Validator{{AttestationPubkey: [32]byte{1}, Index: 0}},
 		JustificationsRoots:      [][]byte{make([]byte, 32)},
 		JustificationsValidators: NewBitlistSSZ(5),
 	}

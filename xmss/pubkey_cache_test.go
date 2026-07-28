@@ -12,7 +12,7 @@ func TestPubKeyCacheGetAndReuse(t *testing.T) {
 
 	var pubkey [types.PubkeySize]byte
 	pubkey[0] = 0x01
-	pubkey[51] = 0xFF
+	pubkey[1] = 0xFF
 
 	pk1, err := cache.Get(pubkey)
 	if err != nil {
