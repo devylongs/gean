@@ -158,8 +158,27 @@ Note: `make test-ffi` is slow (~4 min) because the new memory-optimized keygen
 is O(active-range) and the tests use large ranges (1<<18). Follow-up: shrink
 those ranges to ~1<<10 for test ergonomics (kept as-is here to stay scoped).
 
-Not yet done (later steps): FFI call-shape/Go review (step 5), keygen key
-regeneration + spec fixtures (step 6, gated on the frozen rev + spec pin).
+### Step 5 review (Go FFI call-shape) — no code changes needed
+
+Reviewed the Go binding against the new Rust semantics; it was written generically
+enough that everything flows through:
+- `GenerateKeyPair` passes activation/num-active as slots (`size_t`→`u64`).
+- Buffers are all adequate: `PubkeyBuffer=256` (≥32), `SignatureBuffer=4000`
+  (≥1208), `PrivateKeyBuffer=10 MiB` holds the now variable-length postcard
+  secret key (a full-lifetime `top` tree is ~2 MB).
+- `PublicKeyBytes`/`Sign` check exact sizes (32 / 1208); `loadKeypair` is
+  length-agnostic on the secret key (raw pass-through to the postcard decoder),
+  symmetric with the raw write in `cmd/keygen/generate.go:80`.
+
+Non-blocking follow-ups (deferred, not code-scoped here):
+1. Cosmetic: the secret-key file is still named `*_sk.ssz` but now holds postcard
+   bytes — rename the extension when convenient (touches keygen + load discovery).
+2. Ergonomics: the new keygen is O(active-range); `make run-setup` and the FFI
+   tests use `1<<18`/`1<<16` ranges, so key generation is slow (~12-20 s/key).
+   Shrink test ranges to ~`1<<10`; leave production ranges to the operator.
+
+Not yet done: keygen key regeneration + spec fixtures (step 6, gated on the
+frozen rev + spec pin).
 
 ## Open questions for the call
 1. Sub-MTU adopted for devnet5 (breaking) — confirmed yes/no?
