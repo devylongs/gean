@@ -5,14 +5,24 @@ edition = "2021"
 
 [dependencies]
 sha2 = "0.9"
-leansig = { git = "https://github.com/leanEthereum/leanSig", branch = "devnet4" }
-rand = "0.10.0"
-thiserror = "2.0.17"
+# XMSS is now internalized in leanVM (the standalone leanSig dependency is gone).
+# The single-signature scheme lives in leanVM's `xmss` crate; aggregation lives in
+# `multisig-glue`. Both pin the SAME leanVM rev — keep them in lockstep.
+#
+# PLACEHOLDER REV: leanVM main HEAD at time of writing. Swap for the frozen
+# devnet rev once the interop group agrees one (clients currently track main).
+xmss = { git = "https://github.com/leanEthereum/leanVM.git", rev = "380da82c330eac2841252a655a86ea48ec173bb6" }
+# ethereum_ssz 0.10 — must match leanVM's ssz version so the Encode/Decode impls
+# on XmssPublicKey / XmssSignature are the same trait.
 ssz = { package = "ethereum_ssz", version = "0.10" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# XmssSecretKey is serde-only (SSZ deliberately excluded upstream); persist it
+# with postcard. The secret key never goes on the wire, so the format is local.
+postcard = { version = "1.1.3", features = ["alloc"] }
 
 [features]
+# Inert: leanVM's xmss is a single instantiation (no short-lifetime test variant).
+# Key-gen cost scales with the active-slot count, not the 2^32 lifetime, so tests
+# stay cheap without a separate config. Kept so build invocations don't break.
 test-config = []
 
 [lib]
