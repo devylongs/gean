@@ -144,8 +144,22 @@ won't until step 4):
   `-1` (loud failure, ABI preserved). Only consumer is the `poseidon_permutation`
   spec-vector test — revisit when the spec pin bumps (vectors expected to drop width-24).
 
-Not yet done (later steps): Go constants + ssz tags + `make sszgen` (step 4), FFI
-call-shape/Go review (step 5), keygen + fixtures (step 6).
+### Step 4 progress (Go sizes + SSZ)
+
+Done: `PubkeySize` 52→32, `SignatureSize` 2536→1208; ssz-size tags updated;
+`make sszgen` regenerated all encodings (Validator 72 B, SignedAttestation
+signature slice `136:1344`). Test fixtures migrated across `internal/types`,
+`internal/genesis`, `cmd/keygen`, and the `xmss` FFI tests (dropped the retired
+devnet-4 `reamSignature` vector; parse tests now use generated keys). **All
+gates green: `make build`, `make test` (25 pkgs), `make test-ffi` (22 tests),
+`make lint`.**
+
+Note: `make test-ffi` is slow (~4 min) because the new memory-optimized keygen
+is O(active-range) and the tests use large ranges (1<<18). Follow-up: shrink
+those ranges to ~1<<10 for test ergonomics (kept as-is here to stay scoped).
+
+Not yet done (later steps): FFI call-shape/Go review (step 5), keygen key
+regeneration + spec fixtures (step 6, gated on the frozen rev + spec pin).
 
 ## Open questions for the call
 1. Sub-MTU adopted for devnet5 (breaking) — confirmed yes/no?
