@@ -15,7 +15,7 @@ type Attestation struct {
 type SignedAttestation struct {
 	ValidatorID uint64              `json:"validator_id"`
 	Data        *AttestationData    `json:"data"`
-	Signature   [SignatureSize]byte `json:"signature" ssz-size:"2536"`
+	Signature   [SignatureSize]byte `json:"signature" ssz-size:"1208"`
 }
 
 type AggregatedAttestation struct {
