@@ -82,13 +82,13 @@ func TestLoadKeypairRejectsEmptySecretKey(t *testing.T) {
 }
 
 func TestKeyManagerDualKeyRouting(t *testing.T) {
-	attKp, err := GenerateKeyPair("test-attestation-key-0", 0, 1<<16)
+	attKp, err := GenerateKeyPair("test-attestation-key-0", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("generate attestation keypair: %v", err)
 	}
 	defer attKp.Close()
 
-	propKp, err := GenerateKeyPair("test-proposal-key-0", 0, 1<<16)
+	propKp, err := GenerateKeyPair("test-proposal-key-0", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("generate proposal keypair: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestKeyManagerDualKeyRouting(t *testing.T) {
 }
 
 func TestValidatorKeyPairRejectsClosedKey(t *testing.T) {
-	kp, err := GenerateKeyPair("test-closed-keypair", 0, 1<<16)
+	kp, err := GenerateKeyPair("test-closed-keypair", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("generate keypair: %v", err)
 	}

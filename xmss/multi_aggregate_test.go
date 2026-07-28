@@ -5,12 +5,12 @@ import (
 )
 
 func TestMultipleAggregationsSequential(t *testing.T) {
-	kp1, err := GenerateKeyPair("multi-agg-0", 0, 1<<18)
+	kp1, err := GenerateKeyPair("multi-agg-0", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("keygen 0: %v", err)
 	}
 	defer kp1.Close()
-	kp2, err := GenerateKeyPair("multi-agg-1", 0, 1<<18)
+	kp2, err := GenerateKeyPair("multi-agg-1", 0, 1<<10)
 	if err != nil {
 		t.Fatalf("keygen 1: %v", err)
 	}

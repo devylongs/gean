@@ -173,9 +173,11 @@ enough that everything flows through:
 Non-blocking follow-ups (deferred, not code-scoped here):
 1. Cosmetic: the secret-key file is still named `*_sk.ssz` but now holds postcard
    bytes — rename the extension when convenient (touches keygen + load discovery).
-2. Ergonomics: the new keygen is O(active-range); `make run-setup` and the FFI
-   tests use `1<<18`/`1<<16` ranges, so key generation is slow (~12-20 s/key).
-   Shrink test ranges to ~`1<<10`; leave production ranges to the operator.
+2. Ergonomics (DONE): the new keygen is O(active-range). Shrank the xmss test
+   keygen ranges `1<<18`/`1<<16` → `1<<10` (tests sign at slot ≤4, so 1024 slots
+   is ample); `make test-ffi` go-test phase dropped 245 s → 10 s. Left the
+   benchmark (`block_bench_test.go`, `1<<18`) — it signs at slot `i+1` up to
+   `b.N` and isn't run by `make test`. `make run-setup`'s operator range unchanged.
 
 Not yet done: keygen key regeneration + spec fixtures (step 6, gated on the
 frozen rev + spec pin).
