@@ -135,4 +135,24 @@ var (
 		Name: "lean_proof_merge_components", Help: "Type-1 components merged into a Type-2 proof",
 		Buckets: []float64{1, 2, 3, 4, 5, 6, 7, 8, 9},
 	})
+	metricReqRespRequestSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "lean_reqresp_request_size_bytes",
+		Help:    "On-wire bytes of a req/resp request frame",
+		Buckets: []float64{64, 128, 256, 512, 1024, 4096, 16384, 65536},
+	}, []string{"protocol"})
+	metricReqRespResponseChunkSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "lean_reqresp_response_chunk_size_bytes",
+		Help:    "On-wire bytes of a single req/resp response frame",
+		Buckets: []float64{128, 1024, 10000, 100000, 500000, 1000000, 5000000, 10000000},
+	}, []string{"protocol"})
+	metricBlockProposalAttestationDataSelected = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lean_block_proposal_attestation_data_selected",
+		Help:    "Distinct AttestationData entries placed in the proposal block body",
+		Buckets: []float64{0, 1, 2, 4, 8, 16, 32},
+	})
+	metricBlockProposalAggregatesSelected = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lean_block_proposal_aggregates_selected",
+		Help:    "Aggregated signature proofs selected for the proposal",
+		Buckets: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128},
+	})
 )

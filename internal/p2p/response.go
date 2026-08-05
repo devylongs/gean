@@ -11,7 +11,9 @@ import (
 // that stops reading cannot hold an inbound handler open indefinitely.
 func writeResponse(s network.Stream, label string, code byte, data []byte) bool {
 	armWriteDeadline(s)
-	if _, err := s.Write(EncodeResponse(code, data)); err != nil {
+	encoded := EncodeResponse(code, data)
+	metrics.ObserveReqRespResponseChunkSize(label, len(encoded))
+	if _, err := s.Write(encoded); err != nil {
 		if isStreamTimeout(err) {
 			metrics.IncReqRespTimeout(label, "write")
 		}

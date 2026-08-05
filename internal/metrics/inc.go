@@ -39,3 +39,5 @@ func IncPeerDisconnection(direction, reason string) {
 func IncReqRespTimeout(protocol, direction string) {
 	metricReqRespTimeout.WithLabelValues(labelOrUnknown(protocol), labelOrUnknown(direction)).Inc()
 }
+
+func IncBlockProposalAttestationBuilds() { metricBlockProposalAttestationBuilds.Inc() }
