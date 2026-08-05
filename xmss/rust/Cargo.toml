@@ -13,9 +13,11 @@ strip = "symbols"
 codegen-units = 16
 
 # Optimized profile used by `make ffi` / Dockerfile. Inherits release, enables
-# thin LTO and a single codegen unit for whole-program optimization across the
+# fat LTO and a single codegen unit for whole-program optimization across the
 # leanMultisig backend hot path. Matches zeam's `[profile.multisig-release]`
 # which delivers ~300 ms committee aggregation vs gean's ~2 s on plain release.
+# Fat (vs thin) LTO inlines across the whole prover/verifier graph — a further
+# cut in the signature-verify CPU that dominates block-import at scale.
 #
 # Keep opt-level at the inherited `3`. Do NOT switch to `opt-level = "z"` or
 # `"s"` here: combined with `codegen-units = 1` they deterministically
@@ -25,5 +27,5 @@ codegen-units = 16
 # leanEthereum/leanMultisig#198 and blockblaz/zeam#734.
 [profile.multisig-release]
 inherits = "release"
-lto = "thin"
+lto = "fat"
 codegen-units = 1
