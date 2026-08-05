@@ -308,3 +308,24 @@ func TestSyncDriver_CheckAndBackfill_CancelAbortsStalledDelivery(t *testing.T) {
 		t.Errorf("expected no further range fetches after aborted delivery, got %d calls", got)
 	}
 }
+
+func TestSyncDriver_ShouldBackfill_MaroonedOnFork(t *testing.T) {
+	n, st := makeTestSyncHarness()
+	// Our head kept pace at slot 100, but finalized is stuck at genesis: the
+	// marooned-on-own-fork signature that by-root fetches cannot recover.
+	head := &types.BlockHeader{Slot: 100}
+	root := mustHeaderRoot(head)
+	st.SetHead(root)
+	st.InsertBlockHeader(root, head)
+	st.SetLatestFinalized(&types.Checkpoint{Slot: 0})
+	sd := NewSyncDriver(context.Background(), n, st, &mockSyncP2P{})
+
+	// Peer at the same head but finalized far ahead -> reconcile.
+	if !sd.shouldBackfill(&p2p.StatusMessage{HeadSlot: 100, FinalizedSlot: forkReconcileFinalizedThreshold + 1}) {
+		t.Fatal("expected backfill when finalized is stuck behind a peer at equal head")
+	}
+	// Peer finalized only marginally ahead -> normal skew, no reconcile.
+	if sd.shouldBackfill(&p2p.StatusMessage{HeadSlot: 100, FinalizedSlot: forkReconcileFinalizedThreshold - 1}) {
+		t.Fatal("did not expect backfill for small finalized skew at equal head")
+	}
+}
