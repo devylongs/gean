@@ -26,6 +26,12 @@ func (sd *SyncDriver) checkAndBackfill(ctx context.Context, peerID libp2ppeer.ID
 	defer sd.release(peerID)
 
 	startSlot := sd.store.HeadSlot() + 1
+	if sd.marooned(peerStatus) {
+		// Reconciliation: start below the fork point (our finalized slot) so the
+		// range covers the divergence and fork choice can switch onto the peer's
+		// canonical chain. Starting at our head would only re-fetch our own tip.
+		startSlot = sd.store.LatestFinalized().Slot + 1
+	}
 	for startSlot <= peerStatus.HeadSlot {
 		if err := ctx.Err(); err != nil {
 			return
@@ -58,8 +64,26 @@ func (sd *SyncDriver) shouldBackfill(peerStatus *p2p.StatusMessage) bool {
 		return false
 	}
 	ourHead := sd.store.HeadSlot()
-	return peerStatus.HeadSlot > ourHead &&
-		peerStatus.HeadSlot-ourHead > blocksByRangeSyncThreshold
+	if peerStatus.HeadSlot > ourHead && peerStatus.HeadSlot-ourHead > blocksByRangeSyncThreshold {
+		return true
+	}
+	return sd.marooned(peerStatus)
+}
+
+// marooned reports whether our finalized checkpoint has fallen well behind the
+// peer's while our head kept pace — the signature of a node stuck on its own
+// fork. By-root parent fetches cannot recover a fork the peer never had (the peer
+// answers "no blocks" for a root only our branch produced), so this triggers a
+// range backfill from our finalized point to let fork choice reconcile.
+func (sd *SyncDriver) marooned(peerStatus *p2p.StatusMessage) bool {
+	if sd == nil || sd.store == nil || peerStatus == nil {
+		return false
+	}
+	finalized := sd.store.LatestFinalized()
+	if finalized == nil {
+		return false
+	}
+	return peerStatus.FinalizedSlot > finalized.Slot+forkReconcileFinalizedThreshold
 }
 
 func requestCount(startSlot, headSlot uint64) uint64 {
