@@ -35,10 +35,10 @@ test: ## Run unit tests (excludes crypto FFI and spec tests)
 test-ffi: ffi ## Run XMSS crypto FFI tests (builds FFI first)
 	go test ./xmss/ -v -count=1
 
-test-spec: leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH) ## Run spec fixture tests only (fast, excludes xmss FFI)
+test-spec: ffi leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH) ## Run spec fixture tests only (fast, excludes xmss FFI)
 	go test ./internal/spectests/  -count=1 -tags=spectests
 
-test-all: leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH) ## Run all tests including spec fixtures and xmss FFI (slow)
+test-all: ffi leanSpec/fixtures/.generated-$(LEAN_SPEC_COMMIT_HASH) ## Run all tests including spec fixtures and xmss FFI (slow)
 	go test ./... -v -count=1 -tags=spectests
 
 lint: ## Run linters for go & rust
