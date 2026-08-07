@@ -3,6 +3,7 @@ package blockbuilder
 import (
 	"fmt"
 
+	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -116,6 +117,7 @@ func (p *planner) tryPayload(payload AttestationPayload) bool {
 
 	p.attestations = append(p.attestations, att)
 	p.proofs = append(p.proofs, sig)
+	metrics.IncBlockProposalAttestationBuilds()
 	return true
 }
 

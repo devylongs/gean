@@ -82,4 +82,8 @@ var (
 		Name: "lean_p2p_reqresp_timeout_total",
 		Help: "Req/resp stream operations aborted by the idle deadline, by protocol and direction",
 	}, []string{"protocol", "direction"})
+	metricBlockProposalAttestationBuilds = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "lean_block_proposal_attestation_builds_total",
+		Help: "Payloads selected into the proposal during greedy attestation planning",
+	})
 )

@@ -73,3 +73,19 @@ func ObserveProofSize(proofType string, bytes int) {
 func ObserveProofMergeComponents(n int) {
 	observeNonNegative(metricProofMergeComponents, countValue(n))
 }
+
+func ObserveReqRespRequestSize(protocol string, bytes int) {
+	observeNonNegative(metricReqRespRequestSize.WithLabelValues(labelOrUnknown(protocol)), countValue(bytes))
+}
+
+func ObserveReqRespResponseChunkSize(protocol string, bytes int) {
+	observeNonNegative(metricReqRespResponseChunkSize.WithLabelValues(labelOrUnknown(protocol)), countValue(bytes))
+}
+
+func ObserveBlockProposalAttestationDataSelected(n int) {
+	observeNonNegative(metricBlockProposalAttestationDataSelected, countValue(n))
+}
+
+func ObserveBlockProposalAggregatesSelected(n int) {
+	observeNonNegative(metricBlockProposalAggregatesSelected, countValue(n))
+}

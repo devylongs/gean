@@ -3,6 +3,8 @@ package node
 import (
 	"github.com/geanlabs/gean/internal/blockprocessor"
 	"github.com/geanlabs/gean/internal/logger"
+	"github.com/geanlabs/gean/internal/metrics"
+	"github.com/geanlabs/gean/internal/storage"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -74,9 +76,22 @@ func (e *Engine) importKnownParentBlock(
 	e.dispatchRecovery(signedBlock)
 
 	e.FC.OnBlock(block.Slot, blockRoot, parentRoot)
+	e.recordTableBytes()
 
 	e.updateHead()
 	e.Pending.ClearDepth(blockRoot)
 	e.replayPendingAttestations(blockRoot)
 	e.collectPendingChildren(blockRoot, queue)
+}
+
+// recordTableBytes refreshes the per-table storage-size gauge after a block is
+// persisted. Runs on the single-threaded import path, so the estimate reflects
+// the just-applied write with no locking concerns.
+func (e *Engine) recordTableBytes() {
+	if e.Store == nil || e.Store.Backend == nil {
+		return
+	}
+	for _, table := range storage.AllTables {
+		metrics.SetTableBytes(string(table), e.Store.Backend.EstimateTableBytes(table))
+	}
 }
