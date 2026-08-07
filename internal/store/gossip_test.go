@@ -32,6 +32,34 @@ func TestAttestationSignatureInsertAndDelete(t *testing.T) {
 	}
 }
 
+func TestAttestationSignatureCountForSlot(t *testing.T) {
+	gsm := store.NewAttestationSignatureMap()
+	var sig [types.SignatureSize]byte
+
+	if gsm.SignatureCountForSlot(1) != 0 {
+		t.Fatalf("empty map count=%d, want 0", gsm.SignatureCountForSlot(1))
+	}
+
+	// Slot 1: three votes on one root, one on another → 4. Slot 2: one vote.
+	// The count must be scoped to the queried slot, never the cross-slot total.
+	dr1, dr2, dr3 := [32]byte{1}, [32]byte{2}, [32]byte{3}
+	gsm.Insert(dr1, &types.AttestationData{Slot: 1}, 0, sig)
+	gsm.Insert(dr1, &types.AttestationData{Slot: 1}, 1, sig)
+	gsm.Insert(dr1, &types.AttestationData{Slot: 1}, 2, sig)
+	gsm.Insert(dr2, &types.AttestationData{Slot: 1}, 3, sig)
+	gsm.Insert(dr3, &types.AttestationData{Slot: 2}, 4, sig)
+
+	if got := gsm.SignatureCountForSlot(1); got != 4 {
+		t.Fatalf("SignatureCountForSlot(1)=%d, want 4", got)
+	}
+	if got := gsm.SignatureCountForSlot(2); got != 1 {
+		t.Fatalf("SignatureCountForSlot(2)=%d, want 1", got)
+	}
+	if got := gsm.SignatureCountForSlot(3); got != 0 {
+		t.Fatalf("SignatureCountForSlot(3)=%d, want 0", got)
+	}
+}
+
 func TestAttestationSignaturePruneBelow(t *testing.T) {
 	gsm := store.NewAttestationSignatureMap()
 	var sig [types.SignatureSize]byte

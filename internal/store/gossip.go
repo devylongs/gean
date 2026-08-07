@@ -109,6 +109,21 @@ func (m *AttestationSignatureMap) Len() int {
 	return len(m.data)
 }
 
+// SignatureCountForSlot is the number of collected votes whose attestation data
+// is for the given slot. Early aggregation gauges coverage of the slot being
+// proved, not the cross-slot backlog still awaiting pruning.
+func (m *AttestationSignatureMap) SignatureCountForSlot(slot uint64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, entry := range m.data {
+		if entry.Data != nil && entry.Data.Slot == slot {
+			n += len(entry.Signatures)
+		}
+	}
+	return n
+}
+
 func (m *AttestationSignatureMap) Snapshot() map[[32]byte]*AttestationDataEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()

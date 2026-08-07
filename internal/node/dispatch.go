@@ -17,6 +17,9 @@ func (e *Engine) dispatch(ctx context.Context, ticks <-chan time.Time) {
 		case <-ticks:
 			e.onTick()
 
+		case <-e.EarlyAggregateCh:
+			e.maybeEarlyAggregate(uint64(time.Now().UnixMilli()))
+
 		case block := <-e.BlockCh:
 			e.onBlock(block)
 
