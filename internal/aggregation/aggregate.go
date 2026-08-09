@@ -15,14 +15,19 @@ import (
 )
 
 type aggregationGroup struct {
-	dataRoot [32]byte
-	slot     uint64
+	dataRoot   [32]byte
+	targetSlot uint64
 }
 
-// orderedGroups lists the snapshot's aggregation work newest-slot-first.
-// Fresh attestations are the only ones that can still influence
-// justification, so they must be proven inside the session budget; older
-// backlog only gets prover time the current slot doesn't need.
+// orderedGroups lists the snapshot's aggregation work frontier-first: by
+// ascending target slot. Finalization advances only when the checkpoint
+// immediately after the current source is justified (leanSpec
+// process_attestations finalizes a source when no justifiable slot sits between
+// it and its justified target). So when a backlog does not all fit the session
+// budget, spending it on the lowest unjustified targets keeps finalization
+// moving; ordering newest-first would advance the head while the finalization
+// frontier starves — the shape of the observed stall (head advancing, finality
+// lagging). Only the group order changes; every aggregate produced is spec-valid.
 func orderedGroups(snap *Snapshot) []aggregationGroup {
 	dataRoots := make(map[[32]byte]bool)
 	for dr := range snap.attSigs {
@@ -38,13 +43,20 @@ func orderedGroups(snap *Snapshot) []aggregationGroup {
 		if attData == nil {
 			continue
 		}
-		groups = append(groups, aggregationGroup{dataRoot: dr, slot: attData.Slot})
+		// The target checkpoint drives finalization; fall back to the attestation
+		// slot only for a malformed entry with no target (validation normally
+		// guarantees one).
+		targetSlot := attData.Slot
+		if attData.Target != nil {
+			targetSlot = attData.Target.Slot
+		}
+		groups = append(groups, aggregationGroup{dataRoot: dr, targetSlot: targetSlot})
 	}
 	sort.Slice(groups, func(i, j int) bool {
-		if groups[i].slot != groups[j].slot {
-			return groups[i].slot > groups[j].slot
+		if groups[i].targetSlot != groups[j].targetSlot {
+			return groups[i].targetSlot < groups[j].targetSlot
 		}
-		return bytes.Compare(groups[i].dataRoot[:], groups[j].dataRoot[:]) > 0
+		return bytes.Compare(groups[i].dataRoot[:], groups[j].dataRoot[:]) < 0
 	})
 	return groups
 }
