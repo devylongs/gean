@@ -15,14 +15,19 @@ import (
 )
 
 type aggregationGroup struct {
-	dataRoot [32]byte
-	slot     uint64
+	dataRoot   [32]byte
+	targetSlot uint64
 }
 
-// orderedGroups lists the snapshot's aggregation work newest-slot-first.
-// Fresh attestations are the only ones that can still influence
-// justification, so they must be proven inside the session budget; older
-// backlog only gets prover time the current slot doesn't need.
+// orderedGroups lists the snapshot's aggregation work frontier-first: by
+// ascending target slot. Finalization advances only when the checkpoint
+// immediately after the current source is justified (leanSpec
+// process_attestations finalizes a source when no justifiable slot sits between
+// it and its justified target). So when a backlog does not all fit the session
+// budget, spending it on the lowest unjustified targets keeps finalization
+// moving; ordering newest-first would advance the head while the finalization
+// frontier starves — the shape of the observed stall (head advancing, finality
+// lagging). Only the group order changes; every aggregate produced is spec-valid.
 func orderedGroups(snap *Snapshot) []aggregationGroup {
 	dataRoots := make(map[[32]byte]bool)
 	for dr := range snap.attSigs {
@@ -38,13 +43,20 @@ func orderedGroups(snap *Snapshot) []aggregationGroup {
 		if attData == nil {
 			continue
 		}
-		groups = append(groups, aggregationGroup{dataRoot: dr, slot: attData.Slot})
+		// The target checkpoint drives finalization; fall back to the attestation
+		// slot only for a malformed entry with no target (validation normally
+		// guarantees one).
+		targetSlot := attData.Slot
+		if attData.Target != nil {
+			targetSlot = attData.Target.Slot
+		}
+		groups = append(groups, aggregationGroup{dataRoot: dr, targetSlot: targetSlot})
 	}
 	sort.Slice(groups, func(i, j int) bool {
-		if groups[i].slot != groups[j].slot {
-			return groups[i].slot > groups[j].slot
+		if groups[i].targetSlot != groups[j].targetSlot {
+			return groups[i].targetSlot < groups[j].targetSlot
 		}
-		return bytes.Compare(groups[i].dataRoot[:], groups[j].dataRoot[:]) > 0
+		return bytes.Compare(groups[i].dataRoot[:], groups[j].dataRoot[:]) < 0
 	})
 	return groups
 }
@@ -56,16 +68,54 @@ func orderedGroups(snap *Snapshot) []aggregationGroup {
 // converges to the real prover cost of whatever hardware runs the node.
 const seedPerUnitSeconds = 0.1
 
-// unitCostEstimator tracks observed per-unit aggregation-proving time so each pass
-// can be sized to the remaining session budget. The single-threaded worker holds
-// one across dispatches. No fixed unit cap would hold across machines and
-// validator-set sizes, so it self-calibrates instead.
+// seedPerGroupSeconds seeds the realized per-group wall-time estimate before any
+// group has been observed. It only governs the first group of the first session;
+// the estimate then tracks real hardware.
+const seedPerGroupSeconds = 0.3
+
+// unitCostEstimator tracks observed aggregation-proving time so each pass can be
+// sized to the remaining session budget. The single-threaded worker holds one
+// across dispatches. No fixed cap would hold across machines and validator-set
+// sizes, so it self-calibrates instead.
 type unitCostEstimator struct {
-	perUnitSeconds float64
+	perUnitSeconds  float64
+	perGroupSeconds float64
 }
 
 func newUnitCostEstimator() *unitCostEstimator {
+	// perGroupSeconds is left zero so the first observed group adopts its real
+	// cost directly (nextGroupDuration falls back to the seed until then). This
+	// makes the bound react within one group when proofs suddenly cost seconds,
+	// rather than easing toward it over many sessions.
 	return &unitCostEstimator{perUnitSeconds: seedPerUnitSeconds}
+}
+
+// nextGroupDuration estimates the wall time the next group will take (prep plus
+// recursive proof). The worker refuses to start a group when less than this
+// remains in the budget, so a session cannot overrun and hold the shared prover
+// past the slot — the overrun that starved block import and dropped the
+// aggregator off the chain at scale.
+func (e *unitCostEstimator) nextGroupDuration() time.Duration {
+	secs := seedPerGroupSeconds
+	if e != nil && e.perGroupSeconds > 0 {
+		secs = e.perGroupSeconds
+	}
+	return time.Duration(secs * float64(time.Second))
+}
+
+// observeGroup folds a completed group's realized wall time into the estimate
+// with an exponential moving average, so the bound tracks the cost growth that
+// comes with a larger state and validator set.
+func (e *unitCostEstimator) observeGroup(duration time.Duration) {
+	if e == nil || duration <= 0 {
+		return
+	}
+	const alpha = 0.3
+	if e.perGroupSeconds <= 0 {
+		e.perGroupSeconds = duration.Seconds()
+		return
+	}
+	e.perGroupSeconds = alpha*duration.Seconds() + (1-alpha)*e.perGroupSeconds
 }
 
 // maxUnitsWithin reports how many units fit in the remaining budget at the current
@@ -109,11 +159,18 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 	truncated := false
 
 	for _, group := range orderedGroups(snap) {
-		if !deadline.IsZero() && time.Now().After(deadline) {
+		// Hard budget bound: never start a proof that cannot finish in the time
+		// left. A session that overruns keeps the shared prover past the slot and
+		// starves block import — the failure that dropped the aggregator off the
+		// chain at scale. Stop cleanly and leave this slot's aggregate partial;
+		// the deferred groups' signatures remain in the store for the next session.
+		if !deadline.IsZero() && time.Until(deadline) < estimator.nextGroupDuration() {
 			truncated = true
 			break
 		}
 		dataRoot := group.dataRoot
+		groupStart := time.Now()
+		provedBefore := len(newAggregates)
 		func() {
 			childProofsBuf := getChildProofsBuf()
 			defer putChildProofsBuf(childProofsBuf)
@@ -262,6 +319,11 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 				}
 			}
 		}()
+		// Only groups that actually proved inform the wall-time estimate; skipped
+		// groups (too few signatures) return fast and would bias it low.
+		if len(newAggregates) > provedBefore {
+			estimator.observeGroup(time.Since(groupStart))
+		}
 	}
 
 	return newAggregates, payloadEntries, keysToDelete, truncated
