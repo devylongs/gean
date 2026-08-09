@@ -109,6 +109,26 @@ func (m *AttestationSignatureMap) Len() int {
 	return len(m.data)
 }
 
+// MaxAttestationBacklogSlots bounds how many slots of pending attestation
+// signatures are kept behind the head. Signatures are otherwise pruned only
+// below finalized, so a stalled finalization lets the backlog grow without
+// bound — inflating each aggregation session and feeding the stall. Beyond this
+// window (relative to head) the votes are too old to justify a still-unfinalized
+// checkpoint, so dropping them bounds memory and session size while leaving
+// normal operation untouched: finality lag is single- to low-double-digit slots,
+// far inside the window.
+const MaxAttestationBacklogSlots = 512
+
+// PruneBacklog drops pending signatures for slots more than
+// MaxAttestationBacklogSlots behind headSlot, bounding the backlog when
+// finalization has stalled. Returns the number of data roots removed.
+func (m *AttestationSignatureMap) PruneBacklog(headSlot uint64) int {
+	if headSlot <= MaxAttestationBacklogSlots {
+		return 0
+	}
+	return m.PruneBelow(headSlot - MaxAttestationBacklogSlots)
+}
+
 // SignatureCountForSlot is the number of collected votes whose attestation data
 // is for the given slot. Early aggregation gauges coverage of the slot being
 // proved, not the cross-slot backlog still awaiting pruning.
