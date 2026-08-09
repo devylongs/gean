@@ -51,10 +51,21 @@ Two parts:
    release the prover) when the estimated session-so-far + next proof would
    exceed the deadline, instead of overrunning. Converts the cliff into graceful
    degradation — gean stays synced.
-2. **Order groups finality-first** so the budget is spent on the aggregates that
-   let finality advance (freshest justifiable target / head-descendant roots),
-   not on stale-view or old backlog roots. This lets finality progress even under
-   backlog, which drains the loop instead of feeding it.
+2. **Order groups finality-first.** Verified against leanSpec eca701e
+   (process_attestations): a source finalizes only when the checkpoint
+   immediately after it is justified — no justifiable slot between source and
+   target — so finalization advances one checkpoint at a time from the frontier.
+   Newest-first spends the budget on the highest target (advancing head /
+   justification) and leaves the frontier-adjacent target unaggregated, so
+   finalization stalls while the head moves — the observed stall shape. Ordering
+   is a local heuristic, not spec-mandated, so reordering is spec-safe.
+
+Status: both parts implemented (hard bound + frontier-first ordering = ascending
+target slot). Group order is the only change; every aggregate produced is
+spec-valid. The head-vs-finality tension and the sparse justifiable-slot
+structure make the exact benefit structure-dependent, so a devnet run (truncating
+aggregator finalizes under frontier-first, stalls under newest-first) is the
+remaining validation before merge.
 
 No consensus-root change; aggregates produced remain spec-valid.
 
