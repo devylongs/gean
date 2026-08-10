@@ -58,10 +58,6 @@ func (e *Engine) onTick() {
 	if currentInterval == 3 {
 		e.updateSafeTarget()
 		store.PeriodicPrune(e.Store, e.FC, currentSlot, e.Store.LatestFinalized().Slot)
-		// Cap the pending-signature backlog to a bounded window behind head.
-		// Finalization pruning alone lets it grow without bound when finality
-		// stalls, inflating each aggregation session and feeding the stall.
-		e.Store.AttestationSignatures.PruneBacklog(e.Store.HeadSlot())
 	}
 }
 
