@@ -222,15 +222,15 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 						continue
 					}
 
-					sigHandle := sigEntry.SigHandle
-					if sigHandle == nil {
-						parsed, err := xmss.ParseSignature(sigEntry.Signature[:])
-						if err != nil {
-							continue
-						}
-						defer xmss.FreeSignature(parsed)
-						sigHandle = parsed
+					// Parse a handle the worker owns and frees at the end of this
+					// group. The snapshot carries only bytes, never a handle shared
+					// with the live map, so a concurrent prune cannot free it underneath
+					// the prover.
+					sigHandle, err := xmss.ParseSignature(sigEntry.Signature[:])
+					if err != nil {
+						continue
 					}
+					defer xmss.FreeSignature(sigHandle)
 
 					pk, err := cache.Get(targetState.Validators[sigEntry.ValidatorID].AttestationPubkey)
 					if err != nil {

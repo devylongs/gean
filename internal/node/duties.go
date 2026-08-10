@@ -8,7 +8,6 @@ import (
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/types"
-	"github.com/geanlabs/gean/xmss"
 )
 
 func (e *Engine) produceAttestations(slot uint64) {
@@ -51,8 +50,7 @@ func (e *Engine) produceAttestations(slot uint64) {
 				logger.Error(logger.Validator, "attestation root failed validator=%d: %v", vid, err)
 				continue
 			}
-			sigHandle, parseErr := xmss.ParseSignature(sig[:])
-			e.Store.AttestationSignatures.InsertWithHandle(dataRoot, attData, vid, sig, sigHandle, parseErr)
+			e.Store.AttestationSignatures.Insert(dataRoot, attData, vid, sig)
 		}
 
 		if e.P2P != nil {
