@@ -100,16 +100,15 @@ exceeding the session budget. Levers, in risk order:
 1. Skip already-justified targets (DONE). process_attestations ignores a vote
    once its target is justified, so proving it wastes budget. Filtered in
    `orderedGroups` via `IsSlotJustified`. Safe, frees budget for open targets.
-2. Parallel group proving — INVESTIGATED, NOT safe to ship blind. The proving
-   gate is capacity-1 (single-flight by design) and the FFI has no per-call
-   guard; safety today relies entirely on the gate. rayon is pulled by the
-   signature lib, not the STARK aggregation crates, so the prover's threading and
-   concurrency-safety are unconfirmed, and STARK proofs use large scratch memory
-   (concurrent proofs multiply peak memory). After a recent FFI segfault, adding
-   concurrent prover calls needs, first: WS-6 (handle ownership), a concurrency
-   stress test proving `xmss_aggregate_type_1` is reentrant, a memory-per-proof
-   measurement to bound the degree, and a benchmark showing a real gain. Only
-   then, bounded parallelism.
+2. Parallel group proving — MEASURED, DROPPED. The FFI concurrency stress test
+   (xmss/concurrency_stress_test.go) proved it reentrant with independent handles
+   (4 concurrent proofs, all valid, no crash) but showed **no throughput gain**:
+   speedup 1.09x (serial 216ms/proof vs parallel 198ms/proof), because the STARK
+   prover already saturates all cores per proof. It also added ~95MB RSS per
+   concurrent proof on a ~1.3GB baseline. So concurrency only oversubscribes cores
+   and multiplies memory — pure downside. The per-proof time is core-optimal
+   already; throughput improves only by needing fewer proofs (skip-justified,
+   frontier-first) or a faster prover upstream, not by parallelizing.
 
 ### WS-3 — Aggregator recovery / catch-up (safety net)
 Files: `internal/syncer/`, `internal/node/`.
