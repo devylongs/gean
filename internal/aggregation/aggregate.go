@@ -9,6 +9,7 @@ import (
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/shadow"
+	"github.com/geanlabs/gean/internal/statetransition"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
 	"github.com/geanlabs/gean/xmss"
@@ -49,6 +50,18 @@ func orderedGroups(snap *Snapshot) []aggregationGroup {
 		targetSlot := attData.Slot
 		if attData.Target != nil {
 			targetSlot = attData.Target.Slot
+		}
+		// Skip targets already justified in the head state. process_attestations
+		// ignores a vote once its target is justified, so proving it spends the
+		// session budget on an aggregate that can no longer advance finality —
+		// budget that a still-unjustified target needs. Only a definite "yes"
+		// skips: an out-of-range target (beyond the tracked bitfield, i.e. a fresh
+		// slot) returns an error and is kept.
+		if snap.headState != nil && snap.headState.LatestFinalized != nil {
+			justified, err := statetransition.IsSlotJustified(snap.headState, snap.headState.LatestFinalized.Slot, targetSlot)
+			if err == nil && justified {
+				continue
+			}
 		}
 		groups = append(groups, aggregationGroup{dataRoot: dr, targetSlot: targetSlot})
 	}
