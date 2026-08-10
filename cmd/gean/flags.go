@@ -26,6 +26,7 @@ type config struct {
 	NodeID             string
 	CheckpointURL      string
 	IsAggregator       bool
+	ProverArena        bool
 	CommitteeCount     uint64
 	committeeCountSet  bool
 	AggregateSubnetIDs []uint64
@@ -62,6 +63,7 @@ func parseConfig(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.NodeID, "node-id", "", "Node identifier, e.g. gean_0 (required)")
 	fs.StringVar(&cfg.CheckpointURL, "checkpoint-sync-url", "", "URL for checkpoint sync (optional)")
 	fs.BoolVar(&cfg.IsAggregator, "is-aggregator", false, "Enable attestation aggregation")
+	fs.BoolVar(&cfg.ProverArena, "prover-arena", false, "Prove on leanVM's bump arena instead of the system allocator: faster proving, but RSS ratchets to the high-water mark and never returns (off by default keeps memory bounded for packing many nodes per host)")
 	fs.Uint64Var(&cfg.CommitteeCount, "attestation-committee-count", uint64(types.AttestationCommitteeCount), "Number of attestation subnets (overrides config.yaml ATTESTATION_COMMITTEE_COUNT)")
 	fs.StringVar(&aggregateSubnetIDs, "aggregate-subnet-ids", "", "Comma-separated subnet IDs (requires --is-aggregator)")
 	fs.StringVar(&cfg.DataDir, "data-dir", "./data", "Pebble database directory")

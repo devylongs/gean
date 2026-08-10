@@ -2,8 +2,9 @@ use backend::symmetric::Permutation;
 use backend::{default_koalabear_poseidon1_16, KoalaBear, PrimeField32};
 use lean_multisig::{
     aggregate_single_message_signatures, merge_single_message_aggregates, setup_prover,
-    setup_verifier, verify_multi_message_aggregate, verify_single_message_aggregate,
-    MultiMessageAggregateSignature, SingleMessageAggregateSignature, XmssPublicKey, XmssSignature,
+    setup_prover_without_arena, setup_verifier, verify_multi_message_aggregate,
+    verify_single_message_aggregate, MultiMessageAggregateSignature,
+    SingleMessageAggregateSignature, XmssPublicKey, XmssSignature,
 };
 use rec_aggregation::split_multi_message_aggregate_by_message;
 use std::panic::AssertUnwindSafe;
@@ -36,9 +37,26 @@ macro_rules! ffi_guard {
 // concurrently; the Go-side proving.Gate serializes all aggregate/merge/split
 // work to one at a time, so that invariant holds. Verification does not use the
 // arena and stays safe to run concurrently.
+//
+// The arena is faster but never returns pages to the OS, so RSS ratchets to the
+// allocation high-water mark and stays there. xmss_setup_prover_without_arena
+// warms the same prover on the system allocator instead: slower, but each proof's
+// scratch is freed, keeping a long-lived node's memory bounded. Only one of the
+// two is ever called (shared readiness latch), chosen once at startup.
 #[no_mangle]
 pub extern "C" fn xmss_setup_prover() -> i32 {
     let ready = PROVER_READY.get_or_init(|| std::panic::catch_unwind(setup_prover).is_ok());
+    if *ready {
+        0
+    } else {
+        -1
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn xmss_setup_prover_without_arena() -> i32 {
+    let ready =
+        PROVER_READY.get_or_init(|| std::panic::catch_unwind(setup_prover_without_arena).is_ok());
     if *ready {
         0
     } else {

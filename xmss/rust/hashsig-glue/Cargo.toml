@@ -9,9 +9,9 @@ sha2 = "0.9"
 # The single-signature scheme lives in leanVM's `xmss` crate; aggregation lives in
 # `multisig-glue`. Both pin the SAME leanVM rev — keep them in lockstep.
 #
-# PLACEHOLDER REV: leanVM main HEAD at time of writing. Swap for the frozen
-# devnet rev once the interop group agrees one (clients currently track main).
-xmss = { git = "https://github.com/leanEthereum/leanVM.git", rev = "380da82c330eac2841252a655a86ea48ec173bb6" }
+# Pinned to a5909d18 to match ethlambda's interop devnet rev; must stay in
+# lockstep with multisig-glue's lean-multisig pin (same leanVM rev).
+xmss = { git = "https://github.com/leanEthereum/leanVM.git", rev = "a5909d18647de6aed38640c098d9177fab2bf36a" }
 # ethereum_ssz 0.10 — must match leanVM's ssz version so the Encode/Decode impls
 # on XmssPublicKey / XmssSignature are the same trait.
 ssz = { package = "ethereum_ssz", version = "0.10" }
