@@ -85,17 +85,31 @@ rate, finality lag (head − finalized), backlog size, behind-slots, prover
 wait/unavailable rate. Warn when finality lag or session duration trends up —
 this run gave ~3K slots (11K→14K) of warning that nothing surfaced.
 
-### WS-1 — Cached / incremental state HTR (headroom; consensus-critical)
-Files: `internal/types/` (State HTR path), new cache type; gated by
-`internal/statetransition/state_scale_bench_test.go` + spec fixtures.
+### WS-1 — Cached / incremental state HTR — DROPPED (measured, not the bottleneck)
+Benchmarked `State.HashTreeRoot` (state_scale_bench_test.go): ~2ms at 21K slots
+(v64 and v512), ~8.5ms at 100K — on par with ethlambda's measured state
+transition (62µs→2.2ms). It is <1% of the XMSS cost (aggregation proof 150–340ms,
+import verify ~30–50ms). Caching would save ~2ms for a consensus-critical,
+chain-split-risk change. Not worth it; the throughput bottleneck is XMSS, not
+Merkle hashing. Revisit only past ~100K slots.
 
-Cache the merkle subtrees of the append-only List/bitlist fields and, on append,
-recompute only the O(log n) path plus the length mixin, instead of re-merkleizing
-the whole list. Reduces per-proof and import cost so the loop starts later and
-gean sustains far higher slots — but it is headroom, not the loop fix. Hard
-requirement: cached root MUST equal the full fastssz root for every state
-(property test over random + fixture states + full spec fixtures). Roll out one
-field at a time (start `HistoricalBlockHashes`) behind an equivalence test.
+### WS-7 — Aggregation proving throughput (the real throughput lever)
+The finality lag came from XMSS proving: group count × per-proof (~200ms)
+exceeding the session budget. Levers, in risk order:
+
+1. Skip already-justified targets (DONE). process_attestations ignores a vote
+   once its target is justified, so proving it wastes budget. Filtered in
+   `orderedGroups` via `IsSlotJustified`. Safe, frees budget for open targets.
+2. Parallel group proving — INVESTIGATED, NOT safe to ship blind. The proving
+   gate is capacity-1 (single-flight by design) and the FFI has no per-call
+   guard; safety today relies entirely on the gate. rayon is pulled by the
+   signature lib, not the STARK aggregation crates, so the prover's threading and
+   concurrency-safety are unconfirmed, and STARK proofs use large scratch memory
+   (concurrent proofs multiply peak memory). After a recent FFI segfault, adding
+   concurrent prover calls needs, first: WS-6 (handle ownership), a concurrency
+   stress test proving `xmss_aggregate_type_1` is reentrant, a memory-per-proof
+   measurement to bound the degree, and a benchmark showing a real gain. Only
+   then, bounded parallelism.
 
 ### WS-3 — Aggregator recovery / catch-up (safety net)
 Files: `internal/syncer/`, `internal/node/`.
