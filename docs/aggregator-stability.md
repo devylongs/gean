@@ -69,13 +69,31 @@ remaining validation before merge.
 
 No consensus-root change; aggregates produced remain spec-valid.
 
-### WS-5 — Bound the backlog independent of finality (PRIMARY)
-File: `internal/store/gossip.go` (`AttestationSignatureMap`), pruning.
+### WS-5 — Bound the backlog behind head — TRIED AND REVERTED
+A head-relative signature prune (drop roots more than 512 slots behind head) was
+implemented and merged, then reverted after a server run exposed two failures:
 
-Signatures are pruned only below finalized, so a stalled finality lets the
-backlog grow unbounded — the fuel for the loop. Cap the pending window (e.g.
-drop/ignore roots older than a bounded lookback from head, or above a size cap),
-so group count per session is bounded regardless of finality state.
+1. It deleted the finalization-frontier votes. Once finality lag exceeded the
+   window, the votes needed to finalize the next checkpoint sat below head minus
+   the window and were pruned, so finalization froze (12,880 while head ran to
+   14,355). Any head-relative cap has this flaw: everything between finalized and
+   head is potentially finality-critical, so it cannot be safely dropped.
+2. It caused a use-after-free crash. The prune runs on the tick loop and frees
+   XMSS signature handles; the aggregation worker runs async on a snapshot that
+   shares those handle pointers. Pruning the frontier — exactly the votes the
+   frontier-first worker aggregates — freed handles the worker was still using,
+   segfaulting inside the aggregate FFI at ~16h.
+
+Lesson: the backlog is drained by advancing finality (frontier-first + WS-1
+throughput), not by pruning above finalized. A genuine long-stall memory bound
+belongs with WS-3 recovery (checkpoint resync), and the snapshot must not share
+freeable handles with the live map (see WS-6).
+
+### WS-6 — Snapshot handle lifetime (new; correctness)
+The aggregation snapshot copies signature entries but shares the raw XMSS handle
+pointers with the live map, and any prune frees them. Frontier-first widened the
+overlap enough to crash. Make snapshots own their handles (re-parse from bytes in
+the worker, or ref-count) so no prune can free a handle a live session holds.
 
 ### WS-4 — Guardrails & early warning (safe; pair with the above)
 File: `internal/metrics/`, aggregation worker, `internal/node/tick.go` status.

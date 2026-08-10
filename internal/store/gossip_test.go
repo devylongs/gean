@@ -60,46 +60,6 @@ func TestAttestationSignatureCountForSlot(t *testing.T) {
 	}
 }
 
-func TestAttestationSignaturePruneBacklog(t *testing.T) {
-	gsm := store.NewAttestationSignatureMap()
-	var sig [types.SignatureSize]byte
-
-	// Below the window relative to head, nothing is pruned (normal operation:
-	// finality lag is far inside the window).
-	head := uint64(100)
-	gsm.Insert([32]byte{1}, &types.AttestationData{Slot: head - 5}, 0, sig)
-	gsm.Insert([32]byte{2}, &types.AttestationData{Slot: head}, 1, sig)
-	if pruned := gsm.PruneBacklog(head); pruned != 0 {
-		t.Fatalf("in-window prune=%d, want 0", pruned)
-	}
-	if gsm.Len() != 2 {
-		t.Fatalf("in-window Len=%d, want 2", gsm.Len())
-	}
-
-	// With head far ahead, roots older than head-window are dropped, recent kept.
-	head = store.MaxAttestationBacklogSlots + 1000
-	floor := head - store.MaxAttestationBacklogSlots
-	gsm.Insert([32]byte{3}, &types.AttestationData{Slot: floor - 1}, 2, sig) // stale, drop
-	gsm.Insert([32]byte{4}, &types.AttestationData{Slot: floor + 1}, 3, sig) // recent, keep
-	pruned := gsm.PruneBacklog(head)
-	// The two slot-100-era roots and the stale root are all below the new floor.
-	if pruned != 3 {
-		t.Fatalf("backlog prune=%d, want 3", pruned)
-	}
-	snap := gsm.Snapshot()
-	if _, ok := snap[[32]byte{4}]; !ok {
-		t.Fatal("recent root was pruned")
-	}
-	if gsm.Len() != 1 {
-		t.Fatalf("post-prune Len=%d, want 1", gsm.Len())
-	}
-
-	// Head below the window never underflows / prunes.
-	if pruned := gsm.PruneBacklog(store.MaxAttestationBacklogSlots - 1); pruned != 0 {
-		t.Fatalf("head-below-window prune=%d, want 0", pruned)
-	}
-}
-
 func TestAttestationSignaturePruneBelow(t *testing.T) {
 	gsm := store.NewAttestationSignatureMap()
 	var sig [types.SignatureSize]byte
