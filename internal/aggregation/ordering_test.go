@@ -72,6 +72,38 @@ func TestTruncatingAggregatorKeepsFrontier(t *testing.T) {
 	}
 }
 
+// TestOrderedGroupsSkipsJustifiedTargets: a group whose target is already
+// justified in the head state is dropped, so the session budget goes to targets
+// that can still advance finality. An out-of-range (fresh) target is kept.
+func TestOrderedGroupsSkipsJustifiedTargets(t *testing.T) {
+	const finalized = uint64(100)
+	const justifiedTarget = uint64(105)
+	const openTarget = uint64(106)
+
+	justifiedSlots := types.BitlistExtend(nil, 10)
+	types.BitlistSet(justifiedSlots, justifiedTarget-finalized-1) // mark slot 105 justified
+	headState := &types.State{
+		LatestFinalized: &types.Checkpoint{Slot: finalized},
+		JustifiedSlots:  justifiedSlots,
+	}
+
+	snap := &Snapshot{
+		headState: headState,
+		attSigs: map[[32]byte]*store.AttestationDataEntry{
+			rootByte(1): {Data: &types.AttestationData{Slot: justifiedTarget, Target: &types.Checkpoint{Slot: justifiedTarget}}},
+			rootByte(2): {Data: &types.AttestationData{Slot: openTarget, Target: &types.Checkpoint{Slot: openTarget}}},
+		},
+	}
+
+	ordered := orderedGroups(snap)
+	if len(ordered) != 1 {
+		t.Fatalf("groups=%d, want 1 (justified target skipped)", len(ordered))
+	}
+	if ordered[0].targetSlot != openTarget {
+		t.Fatalf("kept target=%d, want %d (the still-open one)", ordered[0].targetSlot, openTarget)
+	}
+}
+
 // TestOrderedGroupsDeterministicTiebreak: equal target slots break ties by data
 // root, so the order is stable across snapshots regardless of map iteration.
 func TestOrderedGroupsDeterministicTiebreak(t *testing.T) {
