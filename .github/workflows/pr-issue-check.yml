@@ -19,12 +19,12 @@ jobs:
   check-issue:
     if: false
     # original condition: >-
-      github.event_name == 'pull_request' ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        contains(github.event.comment.body, '/recheck-issue-link')
-      )
+    #   github.event_name == 'pull_request' ||
+    #   (
+    #     github.event_name == 'issue_comment' &&
+    #     github.event.issue.pull_request &&
+    #     contains(github.event.comment.body, '/recheck-issue-link')
+    #   )
     runs-on: ubuntu-latest
     steps:
       - name: Check for linked issue
