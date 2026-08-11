@@ -42,6 +42,7 @@ package xmss
 //     size_t activation_epoch, size_t num_active_epochs);
 //
 // int32_t xmss_setup_prover();
+// int32_t xmss_setup_prover_without_arena();
 // int32_t xmss_setup_verifier();
 //
 // int32_t xmss_aggregate_type_1(
@@ -90,6 +91,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/geanlabs/gean/internal/types"
@@ -150,9 +152,30 @@ var (
 
 var proverErr, verifierErr error
 
+// proverArena selects the leanVM prover allocator, read once when the prover is
+// first initialized. Default false = the system allocator: each proof's scratch
+// is freed, so a long-lived node's RSS stays bounded. True = leanVM's bump arena:
+// faster proving, but RSS ratchets to the high-water mark and never comes back.
+// Set it via SetProverArena before the first EnsureProverReady.
+var proverArena atomic.Bool
+
+// SetProverArena selects the prover allocator before initialization. Off (the
+// default) keeps memory bounded for packing many nodes per host; on trades memory
+// for proving throughput on a host that can spare it. A no-op once the prover has
+// been initialized, since the allocator is fixed at that point.
+func SetProverArena(enabled bool) {
+	proverArena.Store(enabled)
+}
+
 func EnsureProverReady() error {
 	proverOnce.Do(func() {
-		if C.xmss_setup_prover() != 0 {
+		var status C.int32_t
+		if proverArena.Load() {
+			status = C.xmss_setup_prover()
+		} else {
+			status = C.xmss_setup_prover_without_arena()
+		}
+		if status != 0 {
 			proverErr = ErrSetupFailed
 		}
 	})
