@@ -49,6 +49,12 @@ type Engine struct {
 	FailedRootCh  chan [32]byte
 	FetchRootCh   chan [32]byte
 
+	// EarlyAggregateCh is a coalescing (capacity-1) wake-up: an attestation-verify
+	// goroutine pokes it after inserting a signature, and the dispatch loop reacts
+	// by considering an early aggregation session. It carries no data — the loop
+	// re-reads live store state — so a full channel is simply dropped.
+	EarlyAggregateCh chan struct{}
+
 	AggregationDispatchCh chan aggregation.Dispatch
 	ProposalCh            chan proposalDuty
 	ProposalResultCh      chan *proposalResult
@@ -68,6 +74,18 @@ type Engine struct {
 	// missing parent cannot flood FetchRootCh with duplicate requests. Accessed only
 	// on the dispatch loop (queue on onBlock, clear on receive/exhaustion), so no lock.
 	fetchInFlight map[[32]byte]bool
+
+	// aggregatedSlot is the last slot for which an aggregation session was
+	// dispatched, so the early (attestation-arrival) path and the interval-2
+	// fallback dispatch at most once per slot. Written and read only on the
+	// single dispatch loop, so no lock.
+	aggregatedSlot uint64
+
+	// numValidators caches the validator-set size, fixed at genesis in lean
+	// devnet, used as the denominator for the early-aggregation quorum. Filled
+	// lazily on the dispatch loop to avoid SSZ-decoding the head state on every
+	// attestation arrival; read/written only there, so no lock.
+	numValidators uint64
 }
 
 func New(
@@ -99,6 +117,7 @@ func New(
 		AggregationCh:         make(chan *types.SignedAggregatedAttestation, 64),
 		FailedRootCh:          make(chan [32]byte, 64),
 		FetchRootCh:           make(chan [32]byte, 256),
+		EarlyAggregateCh:      make(chan struct{}, 1),
 		AggregationDispatchCh: make(chan aggregation.Dispatch, 1),
 		ProposalCh:            make(chan proposalDuty, 1),
 		ProposalResultCh:      make(chan *proposalResult, 1),

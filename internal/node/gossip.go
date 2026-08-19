@@ -8,7 +8,6 @@ import (
 	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
-	"github.com/geanlabs/gean/xmss"
 )
 
 func (e *Engine) onGossipAttestation(att *types.SignedAttestation) {
@@ -59,11 +58,17 @@ func (e *Engine) onGossipAttestation(att *types.SignedAttestation) {
 	metrics.IncPqSigAttestationSigsValid()
 	metrics.IncAttestationsValid(1)
 
-	sigHandle, parseErr := xmss.ParseSignature(att.Signature[:])
-
 	logger.Info(logger.Gossip, "attestation verified: validator=%d slot=%d dataRoot=%x", att.ValidatorID, att.Data.Slot, dataRoot)
-	e.Store.AttestationSignatures.InsertWithHandle(dataRoot, att.Data, att.ValidatorID, att.Signature, sigHandle, parseErr)
+	e.Store.AttestationSignatures.Insert(dataRoot, att.Data, att.ValidatorID, att.Signature)
 	success = true
+
+	// Nudge the dispatch loop to consider aggregating early now that another vote
+	// is in. The signal is best-effort and coalescing; the loop owns the actual
+	// timing and quorum decision.
+	select {
+	case e.EarlyAggregateCh <- struct{}{}:
+	default:
+	}
 }
 
 func (e *Engine) onGossipAggregatedAttestation(agg *types.SignedAggregatedAttestation) {

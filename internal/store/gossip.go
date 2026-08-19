@@ -2,16 +2,18 @@ package store
 
 import (
 	"sync"
-	"unsafe"
 
 	"github.com/geanlabs/gean/internal/types"
-	"github.com/geanlabs/gean/xmss"
 )
 
+// AttestationSignatureEntry holds only the serialized signature, never a parsed
+// XMSS handle. The aggregation worker runs asynchronously on a snapshot of this
+// map, so a handle cached here could be freed by a prune while the worker still
+// held the snapshot's copy of the pointer — a use-after-free that segfaulted the
+// prover. The worker parses its own handle from these bytes and owns its lifetime.
 type AttestationSignatureEntry struct {
 	ValidatorID uint64
 	Signature   [types.SignatureSize]byte
-	SigHandle   unsafe.Pointer
 }
 
 type AttestationDataEntry struct {
@@ -29,10 +31,6 @@ func NewAttestationSignatureMap() AttestationSignatureMap {
 }
 
 func (m *AttestationSignatureMap) Insert(dataRoot [32]byte, data *types.AttestationData, validatorID uint64, sig [types.SignatureSize]byte) {
-	m.InsertWithHandle(dataRoot, data, validatorID, sig, nil, nil)
-}
-
-func (m *AttestationSignatureMap) InsertWithHandle(dataRoot [32]byte, data *types.AttestationData, validatorID uint64, sig [types.SignatureSize]byte, handle unsafe.Pointer, parseErr error) {
 	if data == nil {
 		return
 	}
@@ -47,14 +45,9 @@ func (m *AttestationSignatureMap) InsertWithHandle(dataRoot [32]byte, data *type
 		entry = &AttestationDataEntry{Data: copyAttestationData(data)}
 		m.data[dataRoot] = entry
 	}
-	var h unsafe.Pointer
-	if parseErr == nil {
-		h = handle
-	}
 	entry.Signatures = append(entry.Signatures, AttestationSignatureEntry{
 		ValidatorID: validatorID,
 		Signature:   sig,
-		SigHandle:   h,
 	})
 }
 
@@ -68,11 +61,7 @@ func (m *AttestationSignatureMap) Delete(keys []AttestationDeleteKey) {
 		}
 		filtered := entry.Signatures[:0]
 		for _, sig := range entry.Signatures {
-			if sig.ValidatorID == key.ValidatorID {
-				if sig.SigHandle != nil {
-					xmss.FreeSignature(sig.SigHandle)
-				}
-			} else {
+			if sig.ValidatorID != key.ValidatorID {
 				filtered = append(filtered, sig)
 			}
 		}
@@ -89,13 +78,6 @@ func (m *AttestationSignatureMap) PruneBelow(finalizedSlot uint64) int {
 	pruned := 0
 	for root, entry := range m.data {
 		if entry == nil || entry.Data == nil || entry.Data.Slot <= finalizedSlot {
-			if entry != nil {
-				for _, sig := range entry.Signatures {
-					if sig.SigHandle != nil {
-						xmss.FreeSignature(sig.SigHandle)
-					}
-				}
-			}
 			delete(m.data, root)
 			pruned++
 		}
@@ -107,6 +89,21 @@ func (m *AttestationSignatureMap) Len() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.data)
+}
+
+// SignatureCountForSlot is the number of collected votes whose attestation data
+// is for the given slot. Early aggregation gauges coverage of the slot being
+// proved, not the cross-slot backlog still awaiting pruning.
+func (m *AttestationSignatureMap) SignatureCountForSlot(slot uint64) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, entry := range m.data {
+		if entry.Data != nil && entry.Data.Slot == slot {
+			n += len(entry.Signatures)
+		}
+	}
+	return n
 }
 
 func (m *AttestationSignatureMap) Snapshot() map[[32]byte]*AttestationDataEntry {

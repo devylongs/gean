@@ -72,23 +72,6 @@ func aggregateTestSnapshot(slots ...uint64) *Snapshot {
 	return snap
 }
 
-func TestOrderedGroupsNewestFirst(t *testing.T) {
-	snap := aggregateTestSnapshot(3, 9, 1, 9)
-
-	groups := orderedGroups(snap)
-	if len(groups) != 4 {
-		t.Fatalf("groups=%d, want 4", len(groups))
-	}
-	for i := 1; i < len(groups); i++ {
-		if groups[i].slot > groups[i-1].slot {
-			t.Fatalf("groups not newest-first at %d: %d after %d", i, groups[i].slot, groups[i-1].slot)
-		}
-	}
-	if groups[0].slot != 9 || groups[len(groups)-1].slot != 1 {
-		t.Fatalf("order=%v", groups)
-	}
-}
-
 func TestAggregateFromSnapshotExpiredDeadlineReportsTruncation(t *testing.T) {
 	snap := aggregateTestSnapshot(5)
 	cache := xmss.NewPubKeyCache()

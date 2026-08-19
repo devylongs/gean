@@ -19,6 +19,8 @@ func Build(input Input) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	metrics.ObserveBlockProposalAttestationDataSelected(len(plan.attestations))
+	metrics.ObserveBlockProposalAggregatesSelected(len(plan.proofs))
 
 	finalBlock := newBlock(input.Slot, input.ProposerIndex, input.ParentRoot, plan.attestations)
 	stateRoot, err := plan.postState.HashTreeRoot()

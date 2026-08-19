@@ -52,3 +52,7 @@ func SetAttestationAggregateCoverageDiffValidators(direction string, n int) {
 	metricAttestationAggregateCoverageDiffValidators.
 		WithLabelValues(labelOrUnknown(direction)).Set(countValue(n))
 }
+
+func SetTableBytes(table string, bytes uint64) {
+	metricTableBytes.WithLabelValues(labelOrUnknown(table)).Set(float64(bytes))
+}

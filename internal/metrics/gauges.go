@@ -84,4 +84,7 @@ var (
 	metricProcessRSSBytes = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "lean_node_rss_bytes", Help: "Process resident set size in bytes (includes prover memory outside the Go heap)",
 	})
+	metricTableBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "lean_table_bytes", Help: "Estimated on-disk byte size of a storage table",
+	}, []string{"table"})
 )

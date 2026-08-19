@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/geanlabs/gean/internal/logger"
+	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -103,7 +104,9 @@ func (h *Host) FetchBlocksByRange(
 		return nil, fmt.Errorf("marshal blocks_by_range request: %w", err)
 	}
 	armWriteDeadline(stream)
-	if _, err := stream.Write(EncodeReqRespPayload(reqSSZ)); err != nil {
+	reqBytes := EncodeReqRespPayload(reqSSZ)
+	metrics.ObserveReqRespRequestSize("blocks_by_range", len(reqBytes))
+	if _, err := stream.Write(reqBytes); err != nil {
 		return nil, fmt.Errorf("write blocks_by_range request: %w", err)
 	}
 	stream.CloseWrite()

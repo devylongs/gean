@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/geanlabs/gean/internal/logger"
+	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/types"
 )
 
@@ -82,7 +83,9 @@ func (h *Host) FetchBlocksByRoot(ctx context.Context, peerID peer.ID, roots [][3
 	defer stream.Close()
 
 	armWriteDeadline(stream)
-	if _, err := stream.Write(EncodeReqRespPayload(EncodeBlocksByRootRequest(roots))); err != nil {
+	reqBytes := EncodeReqRespPayload(EncodeBlocksByRootRequest(roots))
+	metrics.ObserveReqRespRequestSize("blocks_by_root", len(reqBytes))
+	if _, err := stream.Write(reqBytes); err != nil {
 		return nil, fmt.Errorf("write blocks request: %w", err)
 	}
 	stream.CloseWrite()

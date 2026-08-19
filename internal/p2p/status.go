@@ -11,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/geanlabs/gean/internal/logger"
+	"github.com/geanlabs/gean/internal/metrics"
 )
 
 const statusMessageSize = 80
@@ -93,7 +94,9 @@ func (h *Host) SendStatusRequest(ctx context.Context, peerID peer.ID, ourStatus 
 	defer stream.Close()
 
 	armWriteDeadline(stream)
-	if _, err := stream.Write(EncodeReqRespPayload(ourStatus.MarshalSSZ())); err != nil {
+	reqBytes := EncodeReqRespPayload(ourStatus.MarshalSSZ())
+	metrics.ObserveReqRespRequestSize("status", len(reqBytes))
+	if _, err := stream.Write(reqBytes); err != nil {
 		return nil, fmt.Errorf("write status request: %w", err)
 	}
 	stream.CloseWrite()
