@@ -49,7 +49,7 @@ func TestReadMethodsHandleNilBackend(t *testing.T) {
 	if got := s.HeadSlot(); got != 0 {
 		t.Fatalf("head slot=%d, want 0", got)
 	}
-	if got := s.GetCanonicalBlocksInRange(0, 1); got != nil {
+	if got, _ := s.GetCanonicalBlocksInRange(0, 1); got != nil {
 		t.Fatalf("canonical blocks=%v, want nil", got)
 	}
 	if roots, err := s.BlockRoots(); err == nil || roots != nil {
