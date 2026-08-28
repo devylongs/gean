@@ -210,17 +210,27 @@ func (s *ConsensusStore) PutLiveChainEntry(slot uint64, root, parentRoot [32]byt
 	return s.putOne(storage.TableLiveChain, key, parentRoot[:], "insert live chain entry")
 }
 
-func (s *ConsensusStore) GetCanonicalBlocksInRange(startSlot, count uint64) []*types.SignedBlock {
+// GetCanonicalBlocksInRange returns the canonical blocks in [startSlot, startSlot+count),
+// walking back from head along the ancestor chain. The second return reports whether the
+// walk actually reached startSlot: a false means the ancestor chain ran out first (a
+// checkpoint-synced or restarted node has no blocks below its anchor), which is not the
+// same answer as "this range is empty" and must not be served as one.
+func (s *ConsensusStore) GetCanonicalBlocksInRange(startSlot, count uint64) ([]*types.SignedBlock, bool) {
 	if count == 0 || startSlot > ^uint64(0)-count {
-		return nil
+		return nil, false
 	}
 
 	endSlot := startSlot + count
 	var blocks []*types.SignedBlock
+	complete := false
 	root := s.Head()
 	for {
 		header := s.GetBlockHeader(root)
-		if header == nil || header.Slot < startSlot {
+		if header == nil {
+			break
+		}
+		if header.Slot < startSlot {
+			complete = true
 			break
 		}
 		if header.Slot < endSlot {
@@ -229,6 +239,7 @@ func (s *ConsensusStore) GetCanonicalBlocksInRange(startSlot, count uint64) []*t
 			}
 		}
 		if header.Slot == 0 {
+			complete = true
 			break
 		}
 		root = header.ParentRoot
@@ -237,5 +248,5 @@ func (s *ConsensusStore) GetCanonicalBlocksInRange(startSlot, count uint64) []*t
 	for i, j := 0, len(blocks)-1; i < j; i, j = i+1, j-1 {
 		blocks[i], blocks[j] = blocks[j], blocks[i]
 	}
-	return blocks
+	return blocks, complete
 }
