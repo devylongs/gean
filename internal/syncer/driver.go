@@ -19,6 +19,9 @@ type SyncDriver struct {
 
 	mu       sync.Mutex
 	inFlight map[libp2ppeer.ID]bool
+	// horizonReported latches the beyond-window report so it is stated once per
+	// episode rather than once per peer per poll.
+	horizonReported bool
 }
 
 func NewSyncDriver(ctx context.Context, node LocalNode, store *store.ConsensusStore, p2pHost SyncDriverP2P) *SyncDriver {
