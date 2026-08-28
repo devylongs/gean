@@ -20,6 +20,11 @@ func (sd *SyncDriver) checkAndBackfill(ctx context.Context, peerID libp2ppeer.ID
 	if !sd.shouldBackfill(peerStatus) {
 		return
 	}
+	if sd.beyondHistoryHorizon(peerStatus) {
+		sd.reportBeyondHistoryHorizon(peerID, peerStatus)
+		return
+	}
+	sd.clearBeyondHistoryHorizon()
 	if !sd.tryReserve(peerID) {
 		return
 	}
@@ -57,6 +62,48 @@ func (sd *SyncDriver) checkAndBackfill(ctx context.Context, peerID libp2ppeer.ID
 		}
 		startSlot = lastSlot + 1
 	}
+}
+
+// beyondHistoryHorizon reports whether our head has fallen so far behind the peer
+// that every request we could make starts below the peer's serving window. The
+// spec pins that window to the responder's current slot
+// (MIN_SLOTS_FOR_BLOCK_REQUESTS), and a start slot below it is answered with
+// RESOURCE_UNAVAILABLE, so no range request from our head can ever be served.
+// Falling forward to a servable start slot would not help either: the blocks
+// returned would have no parent state here and could only churn the pending
+// buffer. Closing a gap this wide requires checkpoint sync.
+func (sd *SyncDriver) beyondHistoryHorizon(peerStatus *p2p.StatusMessage) bool {
+	if sd == nil || sd.store == nil || peerStatus == nil {
+		return false
+	}
+	ourHead := sd.store.HeadSlot()
+	return peerStatus.HeadSlot > ourHead &&
+		peerStatus.HeadSlot-ourHead > types.MinSlotsForBlockRequests
+}
+
+// reportBeyondHistoryHorizon states the condition once per episode. Without the
+// latch this fires for every peer on every poll, burying the one line an operator
+// needs under a repeating log; without the report at all the node just retries an
+// unanswerable request forever and looks merely slow.
+func (sd *SyncDriver) reportBeyondHistoryHorizon(peerID libp2ppeer.ID, peerStatus *p2p.StatusMessage) {
+	sd.mu.Lock()
+	alreadyReported := sd.horizonReported
+	sd.horizonReported = true
+	sd.mu.Unlock()
+	if alreadyReported {
+		return
+	}
+	logger.Error(logger.Sync,
+		"sync: head %d is %d slots behind peer %s (head %d), past the %d-slot block-request window; "+
+			"range backfill cannot recover this gap — restart with --checkpoint-sync-url to re-anchor",
+		sd.store.HeadSlot(), peerStatus.HeadSlot-sd.store.HeadSlot(), peerID,
+		peerStatus.HeadSlot, types.MinSlotsForBlockRequests)
+}
+
+func (sd *SyncDriver) clearBeyondHistoryHorizon() {
+	sd.mu.Lock()
+	sd.horizonReported = false
+	sd.mu.Unlock()
 }
 
 func (sd *SyncDriver) shouldBackfill(peerStatus *p2p.StatusMessage) bool {
