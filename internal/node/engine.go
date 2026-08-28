@@ -73,7 +73,8 @@ type Engine struct {
 	// fetchInFlight tracks block roots already queued for by-root fetch so a single
 	// missing parent cannot flood FetchRootCh with duplicate requests. Accessed only
 	// on the dispatch loop (queue on onBlock, clear on receive/exhaustion), so no lock.
-	fetchInFlight map[[32]byte]bool
+	fetchInFlight  map[[32]byte]bool
+	topicMeshSizes atomic.Pointer[map[string]int]
 
 	// aggregatedSlot is the last slot for which an aggregation session was
 	// dispatched, so the early (attestation-arrival) path and the interval-2

@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -11,6 +12,10 @@ import (
 )
 
 const SyncLagSlots = 2
+
+// gossipMeshSampleInterval paces the mesh-peer gauge. It is an observability
+// sample, not a control input, so it runs well below the slot cadence.
+const gossipMeshSampleInterval = 10 * time.Second
 
 func (e *Engine) updateSyncStatus(currentSlot uint64) {
 	status := e.computeSyncStatus(currentSlot)
@@ -66,10 +71,11 @@ func (e *Engine) logChainStatus(currentSlot uint64) {
 		fcNodesCount = e.FC.Len()
 	}
 
+	// Read the sample runGossipMeshGauge cached rather than querying pubsub here:
+	// the query blocks on the pubsub event loop, and this runs on the tick loop.
 	meshInfo := ""
-	if e.P2P != nil {
-		meshSizes := e.P2P.TopicMeshSizes()
-		for topic, size := range meshSizes {
+	if sizes := e.topicMeshSizes.Load(); sizes != nil {
+		for topic, size := range *sizes {
 			meshInfo += fmt.Sprintf("\n  %-60s mesh_peers=%d", topic, size)
 		}
 	}
@@ -84,9 +90,30 @@ func (e *Engine) logChainStatus(currentSlot uint64) {
 		meshInfo)
 }
 
-func (e *Engine) refreshGossipMeshPeers() {
+// runGossipMeshGauge samples the mesh-peer gauge on its own goroutine. The
+// underlying ListPeers is a synchronous round-trip through the libp2p pubsub
+// event loop, so on a node busy serving req/resp it can block for seconds. Off
+// the tick loop that is a slow gauge; on it, it delayed store.OnTick and stalled
+// the store clock. Sampling is coarse by nature — a slow cadence loses nothing.
+func (e *Engine) runGossipMeshGauge(ctx context.Context) {
 	if e.P2P == nil {
 		return
 	}
+	ticker := time.NewTicker(gossipMeshSampleInterval)
+	defer ticker.Stop()
+	e.sampleGossipMesh()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.sampleGossipMesh()
+		}
+	}
+}
+
+func (e *Engine) sampleGossipMesh() {
 	metrics.SetGossipMeshPeers(e.P2P.MeshPeerCount())
+	sizes := e.P2P.TopicMeshSizes()
+	e.topicMeshSizes.Store(&sizes)
 }
