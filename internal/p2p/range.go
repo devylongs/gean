@@ -20,7 +20,7 @@ import (
 func handleBlocksByRangeRequest(
 	stream network.Stream,
 	currentSlotFn func() uint64,
-	blocksInRangeFn func(startSlot, count uint64) []*types.SignedBlock,
+	blocksInRangeFn func(startSlot, count uint64) ([]*types.SignedBlock, bool),
 ) {
 	armReadDeadline(stream)
 	reqBuf, err := io.ReadAll(io.LimitReader(stream, int64(MaxCompressedPayloadSize)))
@@ -60,7 +60,16 @@ func handleBlocksByRangeRequest(
 	logger.Info(logger.Network, "blocks_by_range: peer requested start_slot=%d count=%d current_slot=%d",
 		req.StartSlot, req.Count, currentSlot)
 
-	for _, block := range blocksInRangeFn(req.StartSlot, req.Count) {
+	blocks, complete := blocksInRangeFn(req.StartSlot, req.Count)
+	// An incomplete ancestor chain is not an empty range. Serving it as a clean
+	// empty stream tells the requester this range does not exist, so it stops
+	// instead of asking a peer that can answer.
+	if !complete {
+		writeResponse(stream, "blocks_by_range", RespResourceUnavailable, []byte("history below stored chain"))
+		return
+	}
+
+	for _, block := range blocks {
 		if block == nil || block.Block == nil {
 			continue
 		}
