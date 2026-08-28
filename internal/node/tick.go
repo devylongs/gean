@@ -23,7 +23,6 @@ func (e *Engine) onTick() {
 
 	metrics.SetCurrentSlot(currentSlot)
 	e.updateSyncStatus(currentSlot)
-	e.refreshGossipMeshPeers()
 
 	isAgg := e.AggCtl != nil && e.AggCtl.Get()
 

@@ -23,9 +23,6 @@ func (e *Engine) dispatch(ctx context.Context, ticks <-chan time.Time) {
 		case block := <-e.BlockCh:
 			e.onBlock(block)
 
-		case agg := <-e.AggregationCh:
-			e.onGossipAggregatedAttestation(agg)
-
 		case result := <-e.ProposalResultCh:
 			e.acceptProposal(ctx, result)
 
