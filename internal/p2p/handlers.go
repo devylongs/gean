@@ -11,7 +11,7 @@ func (h *Host) RegisterReqRespHandlers(
 	statusFn func() *StatusMessage,
 	blockByRootFn func(root [32]byte) *types.SignedBlock,
 	currentSlotFn func() uint64,
-	blocksInRangeFn func(startSlot, count uint64) []*types.SignedBlock,
+	blocksInRangeFn func(startSlot, count uint64) ([]*types.SignedBlock, bool),
 ) {
 	h.host.SetStreamHandler(protocol.ID(StatusProtocol), func(s network.Stream) {
 		defer s.Close()

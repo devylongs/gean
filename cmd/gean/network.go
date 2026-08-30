@@ -60,10 +60,13 @@ func registerReqRespHandlers(p2pHost *p2p.Host, s *store.ConsensusStore) {
 		func(root [32]byte) *types.SignedBlock {
 			return s.GetSignedBlock(root)
 		},
+		// The block-request window slides with the responder's current slot, not its
+		// head: a lagging head would advertise a lower floor and offer history the
+		// spec lets us prune.
 		func() uint64 {
-			return s.HeadSlot()
+			return types.CurrentSlot(s.Config().GenesisTime, uint64(time.Now().UnixMilli()))
 		},
-		func(startSlot, count uint64) []*types.SignedBlock {
+		func(startSlot, count uint64) ([]*types.SignedBlock, bool) {
 			return s.GetCanonicalBlocksInRange(startSlot, count)
 		},
 	)

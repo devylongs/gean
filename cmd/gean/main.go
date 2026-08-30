@@ -11,6 +11,7 @@ import (
 	"github.com/geanlabs/gean/internal/node"
 	"github.com/geanlabs/gean/internal/role"
 	"github.com/geanlabs/gean/internal/shadow"
+	"github.com/geanlabs/gean/xmss"
 )
 
 func main() {
@@ -78,6 +79,7 @@ func run(cfg config) error {
 	registerReqRespHandlers(p2pHost, s)
 
 	proving := len(inputs.keyManager.ValidatorIDs()) > 0 || cfg.IsAggregator
+	xmss.SetProverArena(cfg.ProverArena)
 	warnIfMemoryLimited(proving)
 	if err := preinitializeXMSS(proving); err != nil {
 		return err

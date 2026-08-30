@@ -3,7 +3,7 @@ package xmss
 import "testing"
 
 func TestType2Roundtrip(t *testing.T) {
-	key, err := GenerateKeyPair("type-2-roundtrip", 0, 1<<18)
+	key, err := GenerateKeyPair("type-2-roundtrip", 0, 1<<10)
 	if err != nil {
 		t.Fatal(err)
 	}

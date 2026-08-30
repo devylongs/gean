@@ -93,8 +93,8 @@ func TestManifestUsableAcceptsExistingFiles(t *testing.T) {
 	m := &manifest{
 		Validators: []validatorInfo{{
 			Index:                0,
-			AttestationPubkeyHex: strings.Repeat("a", 104),
-			ProposalPubkeyHex:    strings.Repeat("b", 104),
+			AttestationPubkeyHex: strings.Repeat("a", 64),
+			ProposalPubkeyHex:    strings.Repeat("b", 64),
 			AttestationSkFile:    "att.ssz",
 			ProposalSkFile:       "prop.ssz",
 		}},
@@ -117,8 +117,8 @@ func TestManifestUsableRejectsMalformedMetadata(t *testing.T) {
 
 	validValidator := validatorInfo{
 		Index:                0,
-		AttestationPubkeyHex: strings.Repeat("a", 104),
-		ProposalPubkeyHex:    strings.Repeat("b", 104),
+		AttestationPubkeyHex: strings.Repeat("a", 64),
+		ProposalPubkeyHex:    strings.Repeat("b", 64),
 		AttestationSkFile:    "att.ssz",
 		ProposalSkFile:       "prop.ssz",
 	}

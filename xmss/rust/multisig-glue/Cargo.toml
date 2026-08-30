@@ -4,17 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# leanVM devnet5 HEAD. The root crate re-exports the aggregation API,
-# Xmss key/signature types, and setup_prover/setup_verifier (which now own
-# the internal arena allocator; no global_allocator override). Proofs stay
-# verify-compatible with the leanSpec fixture rev (8fcbd779), so this is a
-# non-snark-breaking bump.
-lean-multisig = { git = "https://github.com/leanEthereum/leanVM.git", rev = "e2592df4e30fdddbbf8ae26a333116c68cec7026" }
+# leanVM main HEAD. The root crate re-exports the aggregation API, Xmss
+# key/signature types, and setup_prover/setup_verifier (which own the internal
+# arena allocator; no global_allocator override). XMSS is now internalized here
+# (leanSig is gone), so this rev must match hashsig-glue's `xmss` pin exactly.
+#
+# Pinned to a5909d18 to match ethlambda's interop devnet rev (same aggregate wire
+# format) and to pick up setup_prover_without_arena for the low-memory prover path.
+# Aggregate wire format changed vs e2592df (compress/decompress_without_pubkeys
+# → to_bytes/from_bytes_without_pubkeys; info.without_pubkeys → info.core).
+lean-multisig = { git = "https://github.com/leanEthereum/leanVM.git", rev = "a5909d18647de6aed38640c098d9177fab2bf36a" }
 # split-by-message is not re-exported by the root crate; pull it from the
 # aggregation crate directly (same git rev, identical re-exported types).
-rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "e2592df4e30fdddbbf8ae26a333116c68cec7026" }
+rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "a5909d18647de6aed38640c098d9177fab2bf36a" }
 # Poseidon permutation primitives for the spec test-vector FFI (poseidon_permute_*).
-backend = { git = "https://github.com/leanEthereum/leanVM.git", rev = "e2592df4e30fdddbbf8ae26a333116c68cec7026" }
+backend = { git = "https://github.com/leanEthereum/leanVM.git", rev = "a5909d18647de6aed38640c098d9177fab2bf36a" }
 
 [lib]
 # Built as an rlib so its `#[no_mangle] pub extern "C"` symbols can be
