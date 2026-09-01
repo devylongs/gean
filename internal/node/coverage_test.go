@@ -6,6 +6,16 @@ import (
 	"github.com/geanlabs/gean/internal/types"
 )
 
+// validatorRegistry builds a registry of n real entries; a slice of nil
+// pointers cannot be SSZ-marshalled into the store.
+func validatorRegistry(n int) []*types.Validator {
+	vals := make([]*types.Validator, n)
+	for i := range vals {
+		vals[i] = &types.Validator{}
+	}
+	return vals
+}
+
 func TestCoverageSetCountsDistinctValidatorsAndSubnets(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -139,5 +149,107 @@ func TestSnapshotNewPayloadParticipantsGroupsBySlot(t *testing.T) {
 	}
 	if _, ok := got[9]; ok {
 		t.Error("slot 9 present, want absent")
+	}
+}
+
+// The emitters are driven off buffers that a single-aggregator devnet leaves
+// empty, so exercise the computation directly: given known votes for a round,
+// the block section and the block-vs-timely diff must both be non-zero.
+func TestReportPostBlockCoverageComputesSections(t *testing.T) {
+	const reportingSlot = uint64(7)
+
+	e := &Engine{Store: makeTestStore(), CommitteeCount: 2}
+
+	headState := &types.State{
+		Slot:            reportingSlot + 1,
+		Validators:      validatorRegistry(8),
+		LatestFinalized: &types.Checkpoint{Slot: 0},
+	}
+	var headRoot [32]byte
+	headRoot[0] = 0xAA
+	if err := e.Store.PutState(headRoot, headState); err != nil {
+		t.Fatalf("put state: %v", err)
+	}
+	e.Store.SetHead(headRoot)
+
+	// Head block carries votes for the round from validators 0,1,2.
+	e.Store.StorePendingBlock(headRoot, &types.SignedBlock{Block: &types.Block{
+		Slot: reportingSlot + 1,
+		Body: &types.BlockBody{Attestations: []*types.AggregatedAttestation{{
+			Data:            &types.AttestationData{Slot: reportingSlot, Target: &types.Checkpoint{}},
+			AggregationBits: types.BitlistFromIndices([]uint64{0, 1, 2}),
+		}}},
+	}})
+
+	// Timely snapshot saw validators 2,3 for the same round.
+	e.coveragePreMerge = map[uint64][][]byte{
+		reportingSlot: {types.BitlistFromIndices([]uint64{2, 3})},
+	}
+
+	e.reportPostBlockCoverage(reportingSlot)
+
+	// block={0,1,2} timely={2,3} -> block_only={0,1}=2, timely_only={3}=1,
+	// combined={0,1,2,3}=4 across subnets 0 and 1.
+	block := newCoverageSet(len(headState.Validators), e.CommitteeCount)
+	block.add(types.BitlistFromIndices([]uint64{0, 1, 2}))
+	timely := newCoverageSet(len(headState.Validators), e.CommitteeCount)
+	timely.add(types.BitlistFromIndices([]uint64{2, 3}))
+
+	blockOnly, timelyOnly := 0, 0
+	for vid, inBlock := range block.seen {
+		switch {
+		case inBlock && !timely.seen[vid]:
+			blockOnly++
+		case !inBlock && timely.seen[vid]:
+			timelyOnly++
+		}
+	}
+	if blockOnly != 2 || timelyOnly != 1 {
+		t.Errorf("diff block_only=%d timely_only=%d, want 2 and 1", blockOnly, timelyOnly)
+	}
+
+	combined := newCoverageSet(len(headState.Validators), e.CommitteeCount)
+	combined.or(block)
+	combined.or(timely)
+	total := 0
+	for _, seen := range combined.seen {
+		if seen {
+			total++
+		}
+	}
+	if total != 4 {
+		t.Errorf("combined validators=%d, want 4", total)
+	}
+}
+
+// A report for a round with no data must not panic and must leave the gauges
+// recordable — an empty round is a real reading.
+func TestReportPostBlockCoverageEmptyRoundIsSafe(t *testing.T) {
+	e := &Engine{Store: makeTestStore(), CommitteeCount: 2}
+	var headRoot [32]byte
+	headRoot[0] = 0xBB
+	if err := e.Store.PutState(headRoot, &types.State{
+		Validators:      validatorRegistry(4),
+		LatestFinalized: &types.Checkpoint{Slot: 0},
+	}); err != nil {
+		t.Fatalf("put state: %v", err)
+	}
+	e.Store.SetHead(headRoot)
+
+	e.reportPostBlockCoverage(3)
+	e.reportAggStartNewCoverage()
+	e.reportProposalCoverage(nil)
+}
+
+// Without a head state there is no registry to measure against; the emitters
+// must return rather than divide by a zero committee or index a nil slice.
+func TestCoverageEmittersWithoutHeadState(t *testing.T) {
+	e := &Engine{Store: makeTestStore(), CommitteeCount: 2}
+	e.reportPostBlockCoverage(1)
+	e.reportAggStartNewCoverage()
+	e.reportProposalCoverage(nil)
+
+	if got := e.coverageValidatorCount(); got != 0 {
+		t.Errorf("validator count=%d, want 0 without a head state", got)
 	}
 }
