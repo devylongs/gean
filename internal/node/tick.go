@@ -32,9 +32,16 @@ func (e *Engine) onTick() {
 		proposerValidatorID, hasProposal = e.getOurProposer(currentSlot)
 	}
 
+	// Capture before OnTick promotes new payloads into known, so the timely
+	// section reflects what had arrived by the promotion boundary.
+	if snap := snapshotNewPayloadParticipants(e.Store); snap != nil {
+		e.coveragePreMerge = snap
+	}
+
 	store.OnTick(e.Store, timestampMs, hasProposal)
 
 	if currentInterval == 2 {
+		e.reportAggStartNewCoverage()
 		// Dispatch unconditionally, matching leanSpec's interval-2 aggregation.
 		// Contention with an upcoming proposal duty is handled by the proving
 		// gate's proposal priority, not by skipping the cycle: a sole aggregator
@@ -158,5 +165,11 @@ func (e *Engine) runAttestationInterval(currentSlot uint64) {
 	e.drainPendingBlocks()
 	e.updateHead()
 	e.produceAttestations(currentSlot)
+	// Report the previous round: by now the head normally carries the block
+	// proposed at currentSlot, which is the first block able to include votes
+	// for currentSlot-1.
+	if currentSlot > 0 {
+		e.reportPostBlockCoverage(currentSlot - 1)
+	}
 	e.logChainStatus(currentSlot)
 }
