@@ -27,15 +27,13 @@ var aggregatorSkipReasons = []string{
 // session that drops every group reports produced=0, which is otherwise
 // indistinguishable from having nothing to aggregate.
 const (
-	AggGroupSkipMissingTargetState = "missing_target_state"
-	AggGroupSkipTargetJustified    = "target_justified"
-	AggGroupSkipTooFewSigners      = "too_few_signers"
-	AggGroupSkipBudget             = "budget"
-	AggGroupSkipError              = "error"
+	AggGroupSkipTargetJustified = "target_justified"
+	AggGroupSkipTooFewSigners   = "too_few_signers"
+	AggGroupSkipBudget          = "budget"
+	AggGroupSkipError           = "error"
 )
 
 var aggregationGroupSkipReasons = []string{
-	AggGroupSkipMissingTargetState,
 	AggGroupSkipTargetJustified,
 	AggGroupSkipTooFewSigners,
 	AggGroupSkipBudget,

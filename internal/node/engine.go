@@ -76,6 +76,11 @@ type Engine struct {
 	fetchInFlight  map[[32]byte]bool
 	topicMeshSizes atomic.Pointer[map[string]int]
 
+	// coveragePreMerge holds the new-payload participants captured before the
+	// tick promoted them, keyed by the slot each vote is for. Read only on the
+	// dispatch loop, which is also the only writer.
+	coveragePreMerge map[uint64][][]byte
+
 	// aggregatedSlot is the last slot for which an aggregation session was
 	// dispatched, so the early (attestation-arrival) path and the interval-2
 	// fallback dispatch at most once per slot. Written and read only on the

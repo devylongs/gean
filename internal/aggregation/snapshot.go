@@ -10,7 +10,6 @@ type Snapshot struct {
 	attSigs      map[[32]byte]*store.AttestationDataEntry
 	newEntries   map[[32]byte]*store.PayloadEntry
 	knownEntries map[[32]byte]*store.PayloadEntry
-	targetStates map[[32]byte]*types.State
 }
 
 func SnapshotInputs(s *store.ConsensusStore) *Snapshot {
@@ -27,7 +26,6 @@ func SnapshotInputs(s *store.ConsensusStore) *Snapshot {
 		attSigs:      s.AttestationSignatures.Snapshot(),
 		newEntries:   make(map[[32]byte]*store.PayloadEntry),
 		knownEntries: make(map[[32]byte]*store.PayloadEntry),
-		targetStates: make(map[[32]byte]*types.State),
 	}
 
 	dataRoots := make(map[[32]byte]bool)
@@ -42,18 +40,6 @@ func SnapshotInputs(s *store.ConsensusStore) *Snapshot {
 	for dr := range dataRoots {
 		if entry := knownEntries[dr]; entry != nil {
 			snap.knownEntries[dr] = entry
-		}
-	}
-
-	for dr := range dataRoots {
-		attData := attestationDataForRoot(snap, dr)
-		if attData == nil {
-			continue
-		}
-		if _, ok := snap.targetStates[attData.Target.Root]; !ok {
-			if state := s.GetState(attData.Target.Root); state != nil {
-				snap.targetStates[attData.Target.Root] = state
-			}
 		}
 	}
 
