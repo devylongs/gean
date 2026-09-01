@@ -49,9 +49,6 @@ func TestSnapshotInputsCapturesPayloadAndTargetState(t *testing.T) {
 	if snap.newEntries[dataRoot] == nil {
 		t.Fatal("new payload entry not captured")
 	}
-	if snap.targetStates[headRoot] == nil || snap.targetStates[headRoot].Slot != headState.Slot {
-		t.Fatal("target state not captured")
-	}
 }
 
 func TestSnapshotInputsReturnsNilWithoutWork(t *testing.T) {

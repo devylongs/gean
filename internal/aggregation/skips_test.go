@@ -12,31 +12,34 @@ import (
 	"github.com/geanlabs/gean/xmss"
 )
 
-// A session that drops every group must say so. Reporting produced=0 with no
-// reason is indistinguishable from an idle aggregator, which is what hid a
-// devnet-5 aggregator producing nothing for 355 consecutive slots.
-func TestAggregateFromSnapshotCountsMissingTargetState(t *testing.T) {
+// A target whose own state was never stored must no longer cost its group.
+// The validator registry is written once at genesis and never by the state
+// transition, so the head state resolves the same signers — this is the case
+// that silently produced nothing for 355 consecutive slots on devnet-5.
+func TestAggregateResolvesSignersWithoutTargetState(t *testing.T) {
 	target := &types.Checkpoint{Slot: 42, Root: rootByte(9)}
 	snap := &Snapshot{
-		headState: &types.State{LatestFinalized: &types.Checkpoint{Slot: 0}},
+		headState: &types.State{
+			LatestFinalized: &types.Checkpoint{Slot: 0},
+			Validators:      make([]*types.Validator, 8),
+		},
 		attSigs: map[[32]byte]*store.AttestationDataEntry{
 			rootByte(1): {Data: &types.AttestationData{Slot: 42, Target: target}},
 			rootByte(2): {Data: &types.AttestationData{Slot: 43, Target: target}},
 		},
-		// targetStates deliberately empty: no state stored for the target root.
-		targetStates: map[[32]byte]*types.State{},
 	}
 
-	aggs, _, _, _, skips := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, shadow.Rates{}, newUnitCostEstimator())
+	_, _, _, _, skips := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, shadow.Rates{}, newUnitCostEstimator())
 
-	if len(aggs) != 0 {
-		t.Fatalf("aggregates=%d, want 0 when no target state is stored", len(aggs))
+	// No group may be dropped for a reason that no longer exists; these groups
+	// carry no signatures, so they fall out as too-few-signers instead.
+	if got := skips[metrics.AggGroupSkipTooFewSigners]; got != 2 {
+		t.Errorf("too_few_signers=%d, want 2 (groups reached signer selection)", got)
 	}
-	if got := skips[metrics.AggGroupSkipMissingTargetState]; got != 2 {
-		t.Errorf("missing_target_state skips=%d, want 2 — the drop must be counted, not silent", got)
-	}
-	if skips.total() != 2 {
-		t.Errorf("total skips=%d, want 2", skips.total())
+	for reason := range skips {
+		if reason == "missing_target_state" {
+			t.Errorf("group dropped for a missing target state; the head registry should have been used")
+		}
 	}
 }
 
@@ -77,12 +80,12 @@ func TestGroupSkipsSummary(t *testing.T) {
 	}
 
 	skips := groupSkips{
-		metrics.AggGroupSkipTooFewSigners:      2,
-		metrics.AggGroupSkipMissingTargetState: 5,
+		metrics.AggGroupSkipTooFewSigners:   2,
+		metrics.AggGroupSkipTargetJustified: 5,
 	}
 	got := skips.summary()
 
-	for _, want := range []string{"missing_target_state=5", "too_few_signers=2"} {
+	for _, want := range []string{"target_justified=5", "too_few_signers=2"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary %q missing %q", got, want)
 		}

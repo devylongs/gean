@@ -52,10 +52,12 @@ func TestAggregationMessageBuildsRootAndSlot(t *testing.T) {
 
 func aggregateTestSnapshot(slots ...uint64) *Snapshot {
 	snap := &Snapshot{
+		// SnapshotInputs never yields a nil head state; signer resolution reads
+		// its validator registry.
+		headState:    &types.State{LatestFinalized: &types.Checkpoint{Slot: 0}},
 		attSigs:      make(map[[32]byte]*store.AttestationDataEntry),
 		newEntries:   make(map[[32]byte]*store.PayloadEntry),
 		knownEntries: make(map[[32]byte]*store.PayloadEntry),
-		targetStates: make(map[[32]byte]*types.State),
 	}
 	for i, slot := range slots {
 		var dr [32]byte
@@ -64,7 +66,7 @@ func aggregateTestSnapshot(slots ...uint64) *Snapshot {
 			Data: &types.AttestationData{
 				Slot:   slot,
 				Head:   &types.Checkpoint{},
-				Target: &types.Checkpoint{},
+				Target: &types.Checkpoint{Slot: slot},
 				Source: &types.Checkpoint{},
 			},
 		}

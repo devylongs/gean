@@ -205,7 +205,7 @@ func (e *unitCostEstimator) observe(duration time.Duration, units int) {
 
 func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
 	skips := groupSkips{}
-	if snap == nil || cache == nil {
+	if snap == nil || cache == nil || snap.headState == nil {
 		return nil, nil, nil, false, skips
 	}
 	if estimator == nil {
@@ -248,15 +248,15 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 
 			// Non-nil: orderedGroups already dropped roots without data.
 			attData := attestationDataForRoot(snap, dataRoot)
-			targetState := snap.targetStates[attData.Target.Root]
-			if targetState == nil {
-				// The vote's target checkpoint has no stored state here, so its
-				// signers' pubkeys cannot be resolved. Counted rather than dropped
-				// silently: when every group lands here the session produces
-				// nothing and looks idle.
-				skips.add(metrics.AggGroupSkipMissingTargetState)
-				return
-			}
+
+			// Signers are resolved against the head state's registry. The
+			// validator set is written once at genesis and never by the state
+			// transition, so every state on the chain carries the same registry
+			// and the head's is equivalent to the vote's target. Reading the
+			// target's own state instead cost a store lookup per data root and
+			// silently dropped the group whenever that state was absent — which
+			// on devnet-5 was every group, every slot.
+			registry := snap.headState.Validators
 
 			// Bound this pass to what fits the remaining session budget at the
 			// current per-unit estimate. Child proofs go in first (most coverage
@@ -266,8 +266,8 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 			remaining := estimator.maxUnitsWithin(time.Until(deadline))
 
 			covered := make(map[uint64]bool)
-			selectChildProofs(newEntry, targetState, childProofsBuf, covered, cache, &remaining)
-			selectChildProofs(knownEntry, targetState, childProofsBuf, covered, cache, &remaining)
+			selectChildProofs(newEntry, snap.headState, childProofsBuf, covered, cache, &remaining)
+			selectChildProofs(knownEntry, snap.headState, childProofsBuf, covered, cache, &remaining)
 
 			if gossipEntry != nil && len(gossipEntry.Signatures) > 0 {
 				sortedSigs := make([]store.AttestationSignatureEntry, len(gossipEntry.Signatures))
@@ -283,7 +283,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 					if covered[sigEntry.ValidatorID] {
 						continue
 					}
-					if sigEntry.ValidatorID >= uint64(len(targetState.Validators)) {
+					if sigEntry.ValidatorID >= uint64(len(registry)) {
 						continue
 					}
 
@@ -297,7 +297,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 					}
 					defer xmss.FreeSignature(sigHandle)
 
-					pk, err := cache.Get(targetState.Validators[sigEntry.ValidatorID].AttestationPubkey)
+					pk, err := cache.Get(registry[sigEntry.ValidatorID].AttestationPubkey)
 					if err != nil {
 						continue
 					}
