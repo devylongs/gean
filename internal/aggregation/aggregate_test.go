@@ -76,7 +76,7 @@ func TestAggregateFromSnapshotExpiredDeadlineReportsTruncation(t *testing.T) {
 	snap := aggregateTestSnapshot(5)
 	cache := xmss.NewPubKeyCache()
 
-	aggs, payloads, deletes, truncated := aggregateFromSnapshot(snap, cache, time.Now().Add(-time.Second), shadow.Rates{}, newUnitCostEstimator())
+	aggs, payloads, deletes, truncated, _ := aggregateFromSnapshot(snap, cache, time.Now().Add(-time.Second), shadow.Rates{}, newUnitCostEstimator())
 
 	if !truncated {
 		t.Fatal("expected truncation with expired deadline")
@@ -89,7 +89,7 @@ func TestAggregateFromSnapshotExpiredDeadlineReportsTruncation(t *testing.T) {
 func TestAggregateFromSnapshotZeroDeadlineProcessesAll(t *testing.T) {
 	snap := aggregateTestSnapshot(5)
 
-	_, _, _, truncated := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, shadow.Rates{}, newUnitCostEstimator())
+	_, _, _, truncated, _ := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, shadow.Rates{}, newUnitCostEstimator())
 
 	if truncated {
 		t.Fatal("zero deadline must never truncate")

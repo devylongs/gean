@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/geanlabs/gean/internal/logger"
@@ -29,7 +30,50 @@ type aggregationGroup struct {
 // moving; ordering newest-first would advance the head while the finalization
 // frontier starves — the shape of the observed stall (head advancing, finality
 // lagging). Only the group order changes; every aggregate produced is spec-valid.
-func orderedGroups(snap *Snapshot) []aggregationGroup {
+// groupSkips counts the groups a session dropped, by reason. Without it a
+// session that drops every group is reported as produced=0, which reads exactly
+// like having nothing to aggregate — the ambiguity that hid an aggregator
+// producing nothing for 355 consecutive slots on devnet-5.
+type groupSkips map[string]int
+
+func (g groupSkips) add(reason string) {
+	if g != nil {
+		g[reason]++
+	}
+}
+
+func (g groupSkips) total() int {
+	n := 0
+	for _, v := range g {
+		n += v
+	}
+	return n
+}
+
+// summary renders the non-zero reasons in a stable order for logging.
+func (g groupSkips) summary() string {
+	if g.total() == 0 {
+		return ""
+	}
+	reasons := make([]string, 0, len(g))
+	for reason := range g {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	var b strings.Builder
+	for _, reason := range reasons {
+		if g[reason] == 0 {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		fmt.Fprintf(&b, "%s=%d", reason, g[reason])
+	}
+	return b.String()
+}
+
+func orderedGroups(snap *Snapshot, skips groupSkips) []aggregationGroup {
 	dataRoots := make(map[[32]byte]bool)
 	for dr := range snap.attSigs {
 		dataRoots[dr] = true
@@ -60,6 +104,7 @@ func orderedGroups(snap *Snapshot) []aggregationGroup {
 		if snap.headState != nil && snap.headState.LatestFinalized != nil {
 			justified, err := statetransition.IsSlotJustified(snap.headState, snap.headState.LatestFinalized.Slot, targetSlot)
 			if err == nil && justified {
+				skips.add(metrics.AggGroupSkipTargetJustified)
 				continue
 			}
 		}
@@ -158,9 +203,10 @@ func (e *unitCostEstimator) observe(duration time.Duration, units int) {
 	e.perUnitSeconds = alpha*sample + (1-alpha)*e.perUnitSeconds
 }
 
-func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool) {
+func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
+	skips := groupSkips{}
 	if snap == nil || cache == nil {
-		return nil, nil, nil, false
+		return nil, nil, nil, false, skips
 	}
 	if estimator == nil {
 		estimator = newUnitCostEstimator()
@@ -171,7 +217,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 	var keysToDelete []store.AttestationDeleteKey
 	truncated := false
 
-	for _, group := range orderedGroups(snap) {
+	for _, group := range orderedGroups(snap, skips) {
 		// Hard budget bound: never start a proof that cannot finish in the time
 		// left. A session that overruns keeps the shared prover past the slot and
 		// starves block import — the failure that dropped the aggregator off the
@@ -179,6 +225,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 		// the deferred groups' signatures remain in the store for the next session.
 		if !deadline.IsZero() && time.Until(deadline) < estimator.nextGroupDuration() {
 			truncated = true
+			skips.add(metrics.AggGroupSkipBudget)
 			break
 		}
 		dataRoot := group.dataRoot
@@ -203,6 +250,11 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 			attData := attestationDataForRoot(snap, dataRoot)
 			targetState := snap.targetStates[attData.Target.Root]
 			if targetState == nil {
+				// The vote's target checkpoint has no stored state here, so its
+				// signers' pubkeys cannot be resolved. Counted rather than dropped
+				// silently: when every group lands here the session produces
+				// nothing and looks idle.
+				skips.add(metrics.AggGroupSkipMissingTargetState)
 				return
 			}
 
@@ -258,12 +310,14 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 			}
 
 			if len(*rawIDsBuf)+len(*childProofsBuf) < 2 {
+				skips.add(metrics.AggGroupSkipTooFewSigners)
 				return
 			}
 
 			dataRootHash, slot, err := aggregationMessage(attData)
 			if err != nil {
 				logger.Error(logger.Signature, "aggregate: prepare message failed slot=%d: %v", attData.Slot, err)
+				skips.add(metrics.AggGroupSkipError)
 				return
 			}
 
@@ -339,7 +393,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 		}
 	}
 
-	return newAggregates, payloadEntries, keysToDelete, truncated
+	return newAggregates, payloadEntries, keysToDelete, truncated, skips
 }
 
 func aggregationMessage(attData *types.AttestationData) ([32]byte, uint32, error) {

@@ -76,7 +76,7 @@ func RunWorker(
 			// (and their signature deletes) regrows the next snapshot until
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
-			aggs, payloads, deletes, truncated := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), shadowRates, estimator)
+			aggs, payloads, deletes, truncated, skips := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), shadowRates, estimator)
 			if gate != nil {
 				gate.Release(false)
 			}
@@ -91,8 +91,17 @@ func RunWorker(
 			metrics.IncProofOperation("aggregation", "success")
 			metrics.ObserveProvingDuration("aggregation", time.Since(workerStart).Seconds())
 			metrics.ObserveAggregationWorkerTotalTime(time.Since(workerStart).Seconds())
-			logger.Info(logger.Signature, "aggregation worker: slot=%d produced=%d duration=%v",
-				dispatch.Slot, len(aggs), time.Since(workerStart))
+			for reason, n := range skips {
+				metrics.IncAggregationGroupSkipped(reason, n)
+			}
+			// Report why a session produced little or nothing. produced=0 alone
+			// cannot distinguish an idle aggregator from one dropping every group.
+			skipSummary := ""
+			if s := skips.summary(); s != "" {
+				skipSummary = " skipped=" + s
+			}
+			logger.Info(logger.Signature, "aggregation worker: slot=%d produced=%d duration=%v%s",
+				dispatch.Slot, len(aggs), time.Since(workerStart), skipSummary)
 		}
 	}
 }

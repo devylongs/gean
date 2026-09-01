@@ -19,6 +19,12 @@ func IncAggregationDispatchDropped()         { metricAggregationDispatchDropped.
 func IncAggregatorSkipped(reason string) {
 	metricAggregatorSkipped.WithLabelValues(aggregatorSkipReason(reason)).Inc()
 }
+func IncAggregationGroupSkipped(reason string, n int) {
+	if n <= 0 {
+		return
+	}
+	metricAggregationGroupSkipped.WithLabelValues(aggregationGroupSkipReason(reason)).Add(float64(n))
+}
 func IncFinalization(result string) {
 	metricFinalizationsTotal.WithLabelValues(labelOrUnknown(result)).Inc()
 }
