@@ -126,9 +126,7 @@ func orderedGroups(snap *Snapshot, skips groupSkips) []aggregationGroup {
 // converges to the real prover cost of whatever hardware runs the node.
 const seedPerUnitSeconds = 0.1
 
-// seedPerGroupSeconds seeds the realized per-group wall-time estimate before any
-// group has been observed. It only governs the first group of the first session;
-// the estimate then tracks real hardware.
+// seedPerGroupSeconds is used until a successful group supplies a wall-time sample.
 const seedPerGroupSeconds = 0.3
 
 // unitCostEstimator tracks observed aggregation-proving time so each pass can be
@@ -148,11 +146,8 @@ func newUnitCostEstimator() *unitCostEstimator {
 	return &unitCostEstimator{perUnitSeconds: seedPerUnitSeconds}
 }
 
-// nextGroupDuration estimates the wall time the next group will take (prep plus
-// recursive proof). The worker refuses to start a group when less than this
-// remains in the budget, so a session cannot overrun and hold the shared prover
-// past the slot — the overrun that starved block import and dropped the
-// aggregator off the chain at scale.
+// nextGroupDuration estimates preparation plus proving time for admission after
+// the first attempt. It cannot bound an in-flight proof's actual duration.
 func (e *unitCostEstimator) nextGroupDuration() time.Duration {
 	secs := seedPerGroupSeconds
 	if e != nil && e.perGroupSeconds > 0 {
@@ -204,6 +199,10 @@ func (e *unitCostEstimator) observe(duration time.Duration, units int) {
 }
 
 func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
+	return aggregateFromSnapshotWithProver(snap, cache, deadline, shadowRates, estimator, xmss.AggregateWithChildren)
+}
+
+func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator, prove func([]xmss.CPubKey, []xmss.CSig, []xmss.ChildProof, [32]byte, uint32) ([]byte, error)) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
 	skips := groupSkips{}
 	if snap == nil || cache == nil || snap.headState == nil {
 		return nil, nil, nil, false, skips
@@ -216,17 +215,19 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 	var payloadEntries []store.PayloadKV
 	var keysToDelete []store.AttestationDeleteKey
 	truncated := false
+	attempted := false
 
 	for _, group := range orderedGroups(snap, skips) {
-		// Hard budget bound: never start a proof that cannot finish in the time
-		// left. A session that overruns keeps the shared prover past the slot and
-		// starves block import — the failure that dropped the aggregator off the
-		// chain at scale. Stop cleanly and leave this slot's aggregate partial;
-		// the deferred groups' signatures remain in the store for the next session.
-		if !deadline.IsZero() && time.Until(deadline) < estimator.nextGroupDuration() {
-			truncated = true
-			skips.add(metrics.AggGroupSkipBudget)
-			break
+		// An over-budget observation must not prevent every future attempt:
+		// without a successful proof the estimator cannot recalibrate. Allow
+		// one attempt while time remains; subsequent attempts use the estimate.
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 || (attempted && remaining < estimator.nextGroupDuration()) {
+				truncated = true
+				skips.add(metrics.AggGroupSkipBudget)
+				break
+			}
 		}
 		dataRoot := group.dataRoot
 		groupStart := time.Now()
@@ -323,8 +324,16 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 
 			metrics.ObserveAggregationPrepTime(time.Since(prepStart).Seconds())
 
+			// Preparation can consume the remaining time. Once started, proving
+			// cannot be interrupted by this deadline.
+			if !deadline.IsZero() && time.Until(deadline) <= 0 {
+				truncated = true
+				skips.add(metrics.AggGroupSkipBudget)
+				return
+			}
+			attempted = true
 			aggStart := time.Now()
-			proofBytes, err := xmss.AggregateWithChildren(*rawPubkeysBuf, *rawSigsBuf, *childProofsBuf, dataRootHash, slot)
+			proofBytes, err := prove(*rawPubkeysBuf, *rawSigsBuf, *childProofsBuf, dataRootHash, slot)
 			// Charge virtual time for the proving cost Shadow would otherwise not
 			// account; the capacity-1 dispatch channel then drops the next slot's
 			// work if proving can't keep up, exactly as on real hardware.
@@ -333,6 +342,7 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 			if err != nil {
 				logger.Error(logger.Signature, "aggregate: failed slot=%d raw=%d children=%d duration=%v: %v",
 					slot, len(*rawIDsBuf), len(*childProofsBuf), aggDuration, err)
+				skips.add(metrics.AggGroupSkipError)
 				return
 			}
 			estimator.observe(aggDuration, len(*rawIDsBuf)+len(*childProofsBuf))
@@ -386,6 +396,9 @@ func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline tim
 				}
 			}
 		}()
+		if truncated {
+			break
+		}
 		// Only groups that actually proved inform the wall-time estimate; skipped
 		// groups (too few signatures) return fast and would bias it low.
 		if len(newAggregates) > provedBefore {
