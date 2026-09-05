@@ -77,20 +77,33 @@ func RunWorker(
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
 			aggs, payloads, deletes, truncated, skips := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), shadowRates, estimator)
+			workerElapsed := time.Since(workerStart)
 			if gate != nil {
 				gate.Release(false)
 			}
 			if truncated {
 				metrics.IncProofOperation("aggregation", "truncated")
-				logger.Warn(logger.Signature, "aggregation session hit budget: slot=%d produced=%d", dispatch.Slot, len(aggs))
+				switch {
+				case len(aggs) == 0:
+					// No output plus a budget stop is the actionable starvation case.
+					logger.Warn(logger.Signature, "aggregation session hit budget without output: slot=%d produced=0 duration=%v", dispatch.Slot, workerElapsed)
+				case workerElapsed > SessionBudget:
+					// A proof exceeded the wall-clock budget; keep this visible even
+					// though partial results were preserved and published.
+					logger.Warn(logger.Signature, "aggregation session overran budget: slot=%d produced=%d duration=%v budget=%v", dispatch.Slot, len(aggs), workerElapsed, SessionBudget)
+				default:
+					// Normal partial completion: the admission estimate stopped a
+					// later group while the completed output stayed within budget.
+					logger.Info(logger.Signature, "aggregation session truncated after partial output: slot=%d produced=%d duration=%v budget=%v", dispatch.Slot, len(aggs), workerElapsed, SessionBudget)
+				}
 			}
 			applyAggregationMutations(consensusStore, payloads, deletes)
 			publishCtx, cancelPublish := context.WithTimeout(ctx, types.MillisecondsPerInterval*time.Millisecond)
 			publishAggregates(publishCtx, publisher, aggs)
 			cancelPublish()
 			metrics.IncProofOperation("aggregation", "success")
-			metrics.ObserveProvingDuration("aggregation", time.Since(workerStart).Seconds())
-			metrics.ObserveAggregationWorkerTotalTime(time.Since(workerStart).Seconds())
+			metrics.ObserveProvingDuration("aggregation", workerElapsed.Seconds())
+			metrics.ObserveAggregationWorkerTotalTime(workerElapsed.Seconds())
 			for reason, n := range skips {
 				metrics.IncAggregationGroupSkipped(reason, n)
 			}
@@ -101,7 +114,7 @@ func RunWorker(
 				skipSummary = " skipped=" + s
 			}
 			logger.Info(logger.Signature, "aggregation worker: slot=%d produced=%d duration=%v%s",
-				dispatch.Slot, len(aggs), time.Since(workerStart), skipSummary)
+				dispatch.Slot, len(aggs), workerElapsed, skipSummary)
 		}
 	}
 }
