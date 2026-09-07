@@ -267,16 +267,12 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 			// on devnet-5 was every group, every slot.
 			registry := snap.headState.Validators
 
-			// Bound this pass to what fits the remaining session budget at the
-			// current per-unit estimate. Child proofs go in first (most coverage
-			// per unit); fresh raw signatures take whatever budget is left and the
-			// rest are deferred to the next pass. A smaller aggregate over the
-			// included participants is still spec-valid.
+			// Prefer raw signatures to avoid recursive proving for coverage already
+			// available locally. Unlike the spec's child-first selection, children
+			// only fill gaps left by the budgeted raw inputs.
 			remaining := estimator.maxUnitsWithin(time.Until(deadline))
 
 			covered := make(map[uint64]bool)
-			selectChildProofs(newEntry, snap.headState, childProofsBuf, covered, cache, &remaining)
-			selectChildProofs(knownEntry, snap.headState, childProofsBuf, covered, cache, &remaining)
 
 			if gossipEntry != nil && len(gossipEntry.Signatures) > 0 {
 				sortedSigs := make([]store.AttestationSignatureEntry, len(gossipEntry.Signatures))
@@ -314,9 +310,30 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 					*rawPubkeysBuf = append(*rawPubkeysBuf, pk)
 					*rawSigsBuf = append(*rawSigsBuf, sigHandle)
 					*rawIDsBuf = append(*rawIDsBuf, sigEntry.ValidatorID)
+					covered[sigEntry.ValidatorID] = true
 					remaining--
 				}
 			}
+
+			childIDs := selectChildProofs(newEntry, snap.headState, childProofsBuf, covered, cache, &remaining)
+			childIDs = append(childIDs, selectChildProofs(knownEntry, snap.headState, childProofsBuf, covered, cache, &remaining)...)
+			childCovered := make(map[uint64]bool, len(childIDs))
+			for _, vid := range childIDs {
+				childCovered[vid] = true
+			}
+			kept := 0
+			for i, vid := range *rawIDsBuf {
+				if childCovered[vid] {
+					continue
+				}
+				(*rawIDsBuf)[kept] = vid
+				(*rawPubkeysBuf)[kept] = (*rawPubkeysBuf)[i]
+				(*rawSigsBuf)[kept] = (*rawSigsBuf)[i]
+				kept++
+			}
+			*rawIDsBuf = (*rawIDsBuf)[:kept]
+			*rawPubkeysBuf = (*rawPubkeysBuf)[:kept]
+			*rawSigsBuf = (*rawSigsBuf)[:kept]
 
 			if len(*rawIDsBuf)+len(*childProofsBuf) < 2 {
 				skips.add(metrics.AggGroupSkipTooFewSigners)
@@ -355,8 +372,7 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 			}
 			estimator.observe(aggDuration, len(*rawIDsBuf)+len(*childProofsBuf))
 
-			allIDs := make([]uint64, 0, len(*rawIDsBuf)+len(covered))
-			allIDs = append(allIDs, (*rawIDsBuf)...)
+			allIDs := make([]uint64, 0, len(covered))
 			for vid := range covered {
 				allIDs = append(allIDs, vid)
 			}
