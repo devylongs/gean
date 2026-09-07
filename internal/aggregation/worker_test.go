@@ -8,6 +8,7 @@ import (
 
 	"github.com/geanlabs/gean/internal/shadow"
 	"github.com/geanlabs/gean/internal/types"
+	"github.com/geanlabs/gean/xmss"
 )
 
 type recordingPublisher struct {
@@ -64,5 +65,33 @@ func waitForWorker(t *testing.T, done <-chan struct{}) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("worker did not exit")
+	}
+}
+
+// The deadline is the slot's promotion boundary, so waiting on the prover or
+// behind a previous session can consume it before this one starts. Running
+// anyway produces nothing and raises the starvation warning, which is meant for
+// a session that had time and still produced nothing — the alarm that surfaced
+// the estimator latch. It must stay unambiguous.
+func TestRunWorkerSkipsDispatchPastItsDeadline(t *testing.T) {
+	publisher := &recordingPublisher{}
+	dispatches := make(chan Dispatch, 1)
+	dispatches <- Dispatch{
+		Slot:     1,
+		Snapshot: aggregateTestSnapshot(1),
+		Deadline: time.Now().Add(-time.Second),
+	}
+	close(dispatches)
+
+	done := make(chan struct{})
+	go func() {
+		RunWorker(context.Background(), dispatches, nil, xmss.NewPubKeyCache(), publisher, nil, shadow.Rates{})
+		close(done)
+	}()
+
+	waitForWorker(t, done)
+
+	if publisher.count != 0 {
+		t.Fatalf("published=%d, want 0 for a dispatch past its deadline", publisher.count)
 	}
 }

@@ -176,34 +176,46 @@ func entryTargetSlot(entry *AttestationDataEntry) uint64 {
 func (m *AttestationSignatureMap) PruneStaleBelow(cutoff uint64, protected map[[32]byte]bool) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pruned := 0
-	for root, entry := range m.data {
+	return m.pruneLocked(func(root [32]byte, entry *AttestationDataEntry) bool {
 		if protected[root] {
-			continue
+			return false
 		}
-		if entry == nil || entry.Data == nil || entryTargetSlot(entry) < cutoff {
-			if entry != nil {
-				m.total -= len(entry.Signatures)
-			}
-			m.dropRootLocked(root)
-			pruned++
-		}
-	}
-	return pruned
+		return entry == nil || entry.Data == nil || entryTargetSlot(entry) < cutoff
+	})
 }
 
 func (m *AttestationSignatureMap) pruneWhere(stale func(*AttestationDataEntry) bool) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.pruneLocked(func(_ [32]byte, entry *AttestationDataEntry) bool {
+		return entry == nil || entry.Data == nil || stale(entry)
+	})
+}
+
+// pruneLocked drops every root the predicate calls stale, then rebuilds the
+// insertion order in a single pass. Removing each root from order individually
+// would rescan it per root, which is quadratic exactly when a sweep has the most
+// to drop.
+func (m *AttestationSignatureMap) pruneLocked(stale func([32]byte, *AttestationDataEntry) bool) int {
 	pruned := 0
 	for root, entry := range m.data {
-		if entry == nil || entry.Data == nil || stale(entry) {
-			if entry != nil {
-				m.total -= len(entry.Signatures)
-			}
-			m.dropRootLocked(root)
-			pruned++
+		if !stale(root, entry) {
+			continue
 		}
+		if entry != nil {
+			m.total -= len(entry.Signatures)
+		}
+		delete(m.data, root)
+		pruned++
+	}
+	if pruned > 0 {
+		kept := m.order[:0]
+		for _, root := range m.order {
+			if _, ok := m.data[root]; ok {
+				kept = append(kept, root)
+			}
+		}
+		m.order = kept
 	}
 	return pruned
 }

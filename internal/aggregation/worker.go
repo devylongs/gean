@@ -89,6 +89,21 @@ func RunWorker(
 			if deadline.IsZero() {
 				deadline = workerStart.Add(SessionBudget)
 			}
+			// The deadline is the slot's promotion boundary, so waiting on the
+			// gate or behind a previous session can consume it entirely. An
+			// aggregate finished after that boundary misses the promotion it was
+			// produced for, so there is nothing to gain by proving one. Report it
+			// as its own case: running the session anyway would produce no output
+			// and raise the starvation warning, which is meant for a session that
+			// had time and still produced nothing.
+			if !time.Now().Before(deadline) {
+				metrics.IncProofOperation("aggregation", "expired")
+				logger.Warn(logger.Signature, "aggregation skipped: past the promotion boundary slot=%d late_by=%v", dispatch.Slot, time.Since(deadline))
+				if gate != nil {
+					gate.Release(false)
+				}
+				continue
+			}
 			// The window is what the dispatcher actually allowed, which is less
 			// than SessionBudget whenever the gate was held for a while.
 			budget := deadline.Sub(workerStart)
