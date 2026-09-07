@@ -8,6 +8,12 @@ import (
 
 const (
 	PruningIntervalSlots = 7200
+
+	// AttestationRetentionSlots is how far below the head the attestation-keyed
+	// pools are kept once finalization stops advancing. Roughly an hour at
+	// 4-second slots: long enough that a brief finality gap costs nothing, short
+	// enough that a sustained stall does not grow the pools without limit.
+	AttestationRetentionSlots = 1024
 )
 
 func PruneOnFinalization(s *ConsensusStore, fc *forkchoice.ForkChoice, oldFinalizedSlot, newFinalizedSlot uint64, newFinalizedRoot [32]byte) {
@@ -36,6 +42,45 @@ func PruneOnFinalization(s *ConsensusStore, fc *forkchoice.ForkChoice, oldFinali
 	logger.Info(logger.Store, "pruning: finalized_slot=%d states=%d blocks=%d live_chain=%d gossip_sigs=%d payloads=%d non_canonical=%d",
 		newFinalizedSlot, prunedStates, prunedBlocks, prunedChain, prunedSigs,
 		prunedKnown+prunedNew, len(nonCanonical))
+}
+
+// PruneStaleAttestationPools clears the attestation-keyed pools against a
+// head-relative cutoff instead of the finalized slot.
+//
+// PruneOnFinalization is the only other path that touches these three pools, and
+// it runs on finalization alone. PeriodicPrune, the existing stall fallback,
+// prunes non-canonical states and blocks and none of the pools, needs
+// finalization to be more than two pruning intervals behind, and fires only on
+// exact multiples of that interval. So the one situation that makes the pools
+// grow without limit is also the one that switches off everything that empties
+// them.
+//
+// Below the finalized slot this is a no-op: PruneOnFinalization already covers
+// that range, and a cutoff at or under it would only repeat work. Data roots
+// holding an aggregated payload keep their raw signatures, since those are the
+// coverage a live aggregate was built from.
+func PruneStaleAttestationPools(s *ConsensusStore, headSlot, finalizedSlot uint64) {
+	if s == nil || headSlot <= AttestationRetentionSlots {
+		return
+	}
+	cutoff := headSlot - AttestationRetentionSlots
+	if cutoff <= finalizedSlot {
+		return
+	}
+
+	protected := make(map[[32]byte]bool)
+	s.NewPayloads.Roots(protected)
+	s.KnownPayloads.Roots(protected)
+
+	prunedSigs := s.AttestationSignatures.PruneStaleBelow(cutoff, protected)
+	prunedKnown := s.KnownPayloads.PruneStaleBelow(cutoff)
+	prunedNew := s.NewPayloads.PruneStaleBelow(cutoff)
+
+	if prunedSigs+prunedKnown+prunedNew == 0 {
+		return
+	}
+	logger.Warn(logger.Store, "finalization lagging, pruned stale attestation pools: cutoff=%d head=%d finalized=%d gossip_sigs=%d payloads=%d",
+		cutoff, headSlot, finalizedSlot, prunedSigs, prunedKnown+prunedNew)
 }
 
 func PeriodicPrune(s *ConsensusStore, fc *forkchoice.ForkChoice, currentSlot, finalizedSlot uint64) {

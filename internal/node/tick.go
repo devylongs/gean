@@ -73,7 +73,9 @@ func (e *Engine) onTick() {
 
 	if currentInterval == 3 {
 		e.updateSafeTarget()
-		store.PeriodicPrune(e.Store, e.FC, currentSlot, e.Store.LatestFinalized().Slot)
+		finalizedSlot := e.Store.LatestFinalized().Slot
+		store.PruneStaleAttestationPools(e.Store, e.Store.HeadSlot(), finalizedSlot)
+		store.PeriodicPrune(e.Store, e.FC, currentSlot, finalizedSlot)
 	}
 }
 

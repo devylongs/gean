@@ -143,12 +143,61 @@ func (m *AttestationSignatureMap) Delete(keys []AttestationDeleteKey) {
 	}
 }
 
+// PruneBelow drops signatures whose target checkpoint is finalized. The target
+// is the right key: it is what decides whether a vote can still advance
+// finality, and it is what the payload buffers prune on, so the two pools now
+// clear the same data roots instead of each keeping what the other dropped.
 func (m *AttestationSignatureMap) PruneBelow(finalizedSlot uint64) int {
+	return m.pruneWhere(func(entry *AttestationDataEntry) bool {
+		return entryTargetSlot(entry) <= finalizedSlot
+	})
+}
+
+// entryTargetSlot is the slot a vote's staleness is judged on. The target
+// checkpoint decides whether the vote can still advance finality; validation
+// guarantees one, and a malformed entry without one falls back to the
+// attestation slot, matching how orderedGroups reads the same data.
+func entryTargetSlot(entry *AttestationDataEntry) uint64 {
+	if entry.Data.Target != nil {
+		return entry.Data.Target.Slot
+	}
+	return entry.Data.Slot
+}
+
+// PruneStaleBelow drops signatures whose target sits below cutoff, skipping any
+// data root named in protected. It exists for the case PruneBelow cannot cover:
+// while finalization is stalled the finalized slot does not move, so a
+// finalization-keyed prune never fires and the pool grows for as long as the
+// stall lasts.
+//
+// Roots that already carry an aggregated payload are protected, because their
+// raw signatures are the coverage an in-flight or published aggregate was built
+// from.
+func (m *AttestationSignatureMap) PruneStaleBelow(cutoff uint64, protected map[[32]byte]bool) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	pruned := 0
 	for root, entry := range m.data {
-		if entry == nil || entry.Data == nil || entry.Data.Slot <= finalizedSlot {
+		if protected[root] {
+			continue
+		}
+		if entry == nil || entry.Data == nil || entryTargetSlot(entry) < cutoff {
+			if entry != nil {
+				m.total -= len(entry.Signatures)
+			}
+			m.dropRootLocked(root)
+			pruned++
+		}
+	}
+	return pruned
+}
+
+func (m *AttestationSignatureMap) pruneWhere(stale func(*AttestationDataEntry) bool) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pruned := 0
+	for root, entry := range m.data {
+		if entry == nil || entry.Data == nil || stale(entry) {
 			if entry != nil {
 				m.total -= len(entry.Signatures)
 			}
