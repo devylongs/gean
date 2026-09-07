@@ -37,8 +37,15 @@ type aggregationGroup struct {
 type groupSkips map[string]int
 
 func (g groupSkips) add(reason string) {
-	if g != nil {
-		g[reason]++
+	g.addN(reason, 1)
+}
+
+// addN records n groups dropped for the same reason. A budget stop defers every
+// remaining group, not just the one it examined, so counting one understates the
+// backlog a short session leaves behind.
+func (g groupSkips) addN(reason string, n int) {
+	if g != nil && n > 0 {
+		g[reason] += n
 	}
 }
 
@@ -217,7 +224,8 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 	truncated := false
 	attempted := false
 
-	for _, group := range orderedGroups(snap, skips) {
+	groups := orderedGroups(snap, skips)
+	for i, group := range groups {
 		// An over-budget observation must not prevent every future attempt:
 		// without a successful proof the estimator cannot recalibrate. Allow
 		// one attempt while time remains; subsequent attempts use the estimate.
@@ -225,7 +233,7 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 			remaining := time.Until(deadline)
 			if remaining <= 0 || (attempted && remaining < estimator.nextGroupDuration()) {
 				truncated = true
-				skips.add(metrics.AggGroupSkipBudget)
+				skips.addN(metrics.AggGroupSkipBudget, len(groups)-i)
 				break
 			}
 		}

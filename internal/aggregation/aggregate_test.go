@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/shadow"
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
@@ -133,5 +134,22 @@ func TestUnitCostEstimatorObserveConverges(t *testing.T) {
 	e.observe(time.Second, 0)
 	if e.perUnitSeconds != steady {
 		t.Fatalf("degenerate observe mutated estimate: %v -> %v", steady, e.perUnitSeconds)
+	}
+}
+
+// A budget stop defers every group still queued, not only the one it examined.
+// Counting a single skip understated the backlog and made a session that dropped
+// a long queue look like one that dropped a single group.
+func TestAggregateFromSnapshotBudgetStopCountsEveryDeferredGroup(t *testing.T) {
+	snap := aggregateTestSnapshot(5, 6, 7)
+	cache := xmss.NewPubKeyCache()
+
+	_, _, _, truncated, skips := aggregateFromSnapshot(snap, cache, time.Now().Add(-time.Second), shadow.Rates{}, newUnitCostEstimator())
+
+	if !truncated {
+		t.Fatal("expected truncation with expired deadline")
+	}
+	if got := skips[metrics.AggGroupSkipBudget]; got != 3 {
+		t.Fatalf("budget skips = %d, want 3 (one per deferred group)", got)
 	}
 }

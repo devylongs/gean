@@ -102,7 +102,14 @@ func RunWorker(
 			publishCtx, cancelPublish := context.WithTimeout(ctx, types.MillisecondsPerInterval*time.Millisecond)
 			publishAggregates(publishCtx, publisher, aggs)
 			cancelPublish()
-			metrics.IncProofOperation("aggregation", "success")
+			// A session that dropped every group is not a success. Counting it
+			// as one is what let an aggregator produce nothing for 355
+			// consecutive slots on devnet-5 while the success rate read 100%.
+			if len(aggs) > 0 {
+				metrics.IncProofOperation("aggregation", "success")
+			} else {
+				metrics.IncProofOperation("aggregation", "empty")
+			}
 			metrics.ObserveProvingDuration("aggregation", workerElapsed.Seconds())
 			metrics.ObserveAggregationWorkerTotalTime(workerElapsed.Seconds())
 			for reason, n := range skips {
