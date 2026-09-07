@@ -40,7 +40,7 @@ func TestAggregationBudgetRecovery(t *testing.T) {
 				for _, d := range tc.observations {
 					e.observeGroup(d)
 				}
-				e.perUnitSeconds = 1
+				e.perRawSeconds = 1
 				cache := xmss.NewPubKeyCache()
 				defer cache.Close()
 				for session := 0; session < 5; session++ {

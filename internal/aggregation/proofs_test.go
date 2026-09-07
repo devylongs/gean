@@ -22,7 +22,7 @@ func TestSelectChildProofsSkipsOutOfRangeParticipant(t *testing.T) {
 	var children []xmss.ChildProof
 	covered := make(map[uint64]bool)
 	remaining := 8
-	selectChildProofs(entry, state, &children, covered, xmss.NewPubKeyCache(), &remaining)
+	selectChildProofs(entry, state, &children, covered, xmss.NewPubKeyCache(), &remaining, 1, 0)
 
 	if len(children) != 0 {
 		t.Fatalf("children=%d, want 0", len(children))
@@ -32,27 +32,40 @@ func TestSelectChildProofsSkipsOutOfRangeParticipant(t *testing.T) {
 	}
 }
 
-func TestSelectChildProofsStopsAtBudget(t *testing.T) {
-	entry := &store.PayloadEntry{
-		Proofs: []*types.SingleMessageAggregate{{
-			Participants: types.BitlistFromIndices([]uint64{0}),
-			Proof:        []byte{1},
-		}},
+func TestSelectChildProofsAdmitsFirstChildThenPricesTheRest(t *testing.T) {
+	// One raw signature already held, so the group reaches viability with its
+	// first child. That child is exempt from the price regardless — validators
+	// reachable only through a child proof have no raw fallback. The second is
+	// charged what it costs.
+	proof := func(ids ...uint64) *types.SingleMessageAggregate {
+		return &types.SingleMessageAggregate{Participants: types.BitlistFromIndices(ids), Proof: []byte{1}}
 	}
-	state := &types.State{
-		Validators: []*types.Validator{{Index: 0}},
-	}
+	state := &types.State{Validators: []*types.Validator{{Index: 0}, {Index: 1}}}
 
-	var children []xmss.ChildProof
-	covered := make(map[uint64]bool)
-	remaining := 0
-	selectChildProofs(entry, state, &children, covered, xmss.NewPubKeyCache(), &remaining)
+	for _, tc := range []struct {
+		name      string
+		remaining int
+		childCost int
+		want      int
+	}{
+		{name: "no_budget_still_admits_one", remaining: 0, childCost: 5, want: 1},
+		{name: "budget_admits_both", remaining: 20, childCost: 5, want: 2},
+		{name: "budget_short_of_second", remaining: 3, childCost: 5, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := &store.PayloadEntry{Proofs: []*types.SingleMessageAggregate{proof(0), proof(1)}}
+			cache := xmss.NewPubKeyCache()
+			defer cache.Close()
 
-	if len(children) != 0 {
-		t.Fatalf("children=%d, want 0 (budget exhausted)", len(children))
-	}
-	if len(covered) != 0 {
-		t.Fatal("exhausted budget must not process any proof")
+			var children []xmss.ChildProof
+			covered := make(map[uint64]bool)
+			remaining := tc.remaining
+			selectChildProofs(entry, state, &children, covered, cache, &remaining, tc.childCost, 1)
+
+			if len(children) != tc.want {
+				t.Fatalf("children=%d, want %d", len(children), tc.want)
+			}
+		})
 	}
 }
 
@@ -77,8 +90,8 @@ func TestSelectChildProofsCapsChildrenPerGroup(t *testing.T) {
 	covered := map[uint64]bool{}
 	remaining := 100
 
-	selectChildProofs(newEntry, state, &children, covered, cache, &remaining)
-	selectChildProofs(knownEntry, state, &children, covered, cache, &remaining)
+	selectChildProofs(newEntry, state, &children, covered, cache, &remaining, 1, 0)
+	selectChildProofs(knownEntry, state, &children, covered, cache, &remaining, 1, 0)
 
 	if len(children) != maxChildProofsPerGroup {
 		t.Fatalf("children=%d, want %d", len(children), maxChildProofsPerGroup)

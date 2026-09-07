@@ -23,6 +23,19 @@ const maxChildProofsPerGroup = 2
 // The cap counts children already in the slice, so it holds across the separate
 // new-payload and known-payload passes that share one group's inputs.
 //
+// childCost prices one child in raw-signature units, and rawCount is how many
+// raw signatures the group already holds. Two children are exempt from that
+// price, for two different reasons:
+//
+//   - Until rawCount+children reaches two the group is not yet spec-viable, so
+//     charging for those children could leave it unable to produce anything.
+//   - The first child is admitted regardless. Validators reachable only through
+//     a child proof have no raw signature to fall back on, and pricing that
+//     first child out under a tight budget defers exactly the votes finality is
+//     waiting on, every session, for as long as the pressure lasts.
+//
+// Every child after that must fit the remaining budget.
+//
 // Selection is greedy on coverage: each round takes the proof adding the most
 // still-uncovered validators, matching leanSpec's select_proofs_for_coverage.
 // Walking the pool in stored order instead can take several low-coverage proofs
@@ -35,14 +48,24 @@ func selectChildProofs(
 	covered map[uint64]bool,
 	cache *xmss.PubKeyCache,
 	remaining *int,
+	childCost int,
+	rawCount int,
 ) (selectedIDs []uint64) {
 	if entry == nil || state == nil || cache == nil || len(entry.Proofs) == 0 {
 		return
 	}
 
+	if childCost < 1 {
+		childCost = 1
+	}
+
 	used := make([]bool, len(entry.Proofs))
 	for {
-		if *remaining <= 0 || len(*children) >= maxChildProofsPerGroup {
+		if len(*children) >= maxChildProofsPerGroup {
+			return
+		}
+		exempt := len(*children) == 0 || rawCount+len(*children) < 2
+		if !exempt && *remaining < childCost {
 			return
 		}
 
@@ -108,7 +131,7 @@ func selectChildProofs(
 			Pubkeys: pubkeys,
 			Proof:   proof.Proof,
 		})
-		*remaining--
+		*remaining -= childCost
 	}
 }
 

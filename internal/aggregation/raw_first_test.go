@@ -25,7 +25,10 @@ func TestRawFirstSelection(t *testing.T) {
 		{name: "overlap_trimmed", raw: []uint64{0, 2}, children: [][]uint64{{0, 1}}, wantRaw: 1, wantChildren: 1, wantIDs: []uint64{0, 1, 2}},
 		{name: "missing_raw_uses_child", raw: []uint64{2}, children: [][]uint64{{0, 1}}, wantRaw: 1, wantChildren: 1, wantIDs: []uint64{0, 1, 2}},
 		{name: "invalid_child_keeps_raw", raw: []uint64{0, 1}, children: [][]uint64{{0, 9}}, wantRaw: 2, wantIDs: []uint64{0, 1}},
-		{name: "budget_defers_inputs", raw: []uint64{0, 1, 2}, children: [][]uint64{{2, 3}}, limited: true, wantRaw: 2, wantIDs: []uint64{0, 1}},
+		// A tight budget trims raw signatures, but not the group's first child:
+		// validator 3 is reachable only through it, and pricing it out would
+		// defer that vote every session for as long as the pressure lasts.
+		{name: "budget_defers_raw_not_first_child", raw: []uint64{0, 1, 2}, children: [][]uint64{{2, 3}}, limited: true, wantRaw: 2, wantChildren: 1, wantIDs: []uint64{0, 1, 2, 3}},
 		// Stored order would take {0,1} first and then still need {0,1,2} for
 		// validator 2, paying for two recursive inputs where one covers everything.
 		{name: "greedy_picks_widest_child", raw: []uint64{3}, children: [][]uint64{{0, 1}, {0, 1, 2}}, wantRaw: 1, wantChildren: 1, wantIDs: []uint64{0, 1, 2, 3}},
@@ -52,7 +55,7 @@ func TestRawFirstSelection(t *testing.T) {
 			defer cache.Close()
 			estimator := newUnitCostEstimator()
 			if tc.limited {
-				estimator.perUnitSeconds = 1
+				estimator.perRawSeconds = 1
 			}
 			calls := 0
 			prove := func(pks []xmss.CPubKey, sigs []xmss.CSig, children []xmss.ChildProof, _ [32]byte, _ uint32) ([]byte, error) {

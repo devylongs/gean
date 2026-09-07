@@ -115,13 +115,13 @@ func TestUnitCostEstimatorMaxUnitsWithin(t *testing.T) {
 }
 
 func TestUnitCostEstimatorObserveConverges(t *testing.T) {
-	e := newUnitCostEstimator() // seed 0.1s/unit
+	e := newUnitCostEstimator() // seed 0.1s per raw signature
 
 	// A cheaper-than-seed observation must pull the estimate down, letting more
 	// units fit the budget on the next pass.
 	before := e.maxUnitsWithin(time.Second)
 	for range 20 {
-		e.observe(200*time.Millisecond, 10) // 0.02s/unit
+		e.observe(200*time.Millisecond, 10, 0) // 0.02s per raw signature
 	}
 	after := e.maxUnitsWithin(time.Second)
 	if after <= before {
@@ -129,11 +129,46 @@ func TestUnitCostEstimatorObserveConverges(t *testing.T) {
 	}
 
 	// Degenerate inputs are ignored, not divided by.
-	steady := e.perUnitSeconds
-	e.observe(0, 10)
-	e.observe(time.Second, 0)
-	if e.perUnitSeconds != steady {
-		t.Fatalf("degenerate observe mutated estimate: %v -> %v", steady, e.perUnitSeconds)
+	steady := e.perRawSeconds
+	e.observe(0, 10, 0)
+	e.observe(time.Second, 0, 0)
+	if e.perRawSeconds != steady {
+		t.Fatalf("degenerate observe mutated estimate: %v -> %v", steady, e.perRawSeconds)
+	}
+}
+
+// A child proof and a raw signature are separate cost populations. Charging a
+// child one unit, as though it were one more signature, let a group spend its
+// whole allowance on recursive inputs costing several times as much.
+func TestUnitCostEstimatorPricesChildrenApartFromRaw(t *testing.T) {
+	e := newUnitCostEstimator()
+
+	// Raw-only groups price the raw signature directly.
+	for range 20 {
+		e.observe(200*time.Millisecond, 10, 0) // 0.02s each
+	}
+
+	// A group of the same 10 signatures plus one child took 2s, so the child
+	// accounts for the 1.8s the raw share does not explain.
+	for range 20 {
+		e.observe(2*time.Second, 10, 1)
+	}
+
+	if e.perRawSeconds > 0.05 {
+		t.Fatalf("raw estimate polluted by the recursive group: %v", e.perRawSeconds)
+	}
+	if e.perChildSeconds < 1.0 {
+		t.Fatalf("child estimate = %v, want the unexplained residual (~1.8s)", e.perChildSeconds)
+	}
+	if got := e.childUnitCost(); got < 20 {
+		t.Fatalf("childUnitCost = %d, want a child priced well above one signature", got)
+	}
+
+	// A group cheaper than its raw share alone says nothing about its children.
+	steady := e.perChildSeconds
+	e.observe(time.Millisecond, 10, 1)
+	if e.perChildSeconds != steady {
+		t.Fatalf("under-cost group mutated the child estimate: %v -> %v", steady, e.perChildSeconds)
 	}
 }
 

@@ -3,6 +3,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -126,12 +127,18 @@ func orderedGroups(snap *Snapshot, skips groupSkips) []aggregationGroup {
 	return groups
 }
 
-// seedPerUnitSeconds is a conservative starting cost for one aggregation unit
-// (one raw signature or one child proof). It only governs the first pass, before
-// any real timing is observed: a high seed makes that pass trim rather than risk
-// spending the whole session budget on a single group. The estimate then
-// converges to the real prover cost of whatever hardware runs the node.
-const seedPerUnitSeconds = 0.1
+// seedPerRawSeconds is a conservative starting cost for one raw signature. It
+// only governs the first pass, before any real timing is observed: a high seed
+// makes that pass trim rather than risk spending the whole session budget on a
+// single group. The estimate then converges to the real prover cost of whatever
+// hardware runs the node.
+const seedPerRawSeconds = 0.1
+
+// seedPerChildSeconds is the starting cost for one child proof. Measured on a
+// 16-core host, a group carrying a child ran 1.68-2.96s against 0.31-0.91s for
+// raw-only groups; the seed is deliberately nearer the low end so the first pass
+// is not paralysed before any timing is observed.
+const seedPerChildSeconds = 1.5
 
 // seedPerGroupSeconds is used until a successful group supplies a wall-time sample.
 const seedPerGroupSeconds = 0.3
@@ -154,8 +161,12 @@ const MaxGroupsWhenProposing = 1
 // sized to the remaining session budget. The single-threaded worker holds one
 // across dispatches. No fixed cap would hold across machines and validator-set
 // sizes, so it self-calibrates instead.
+// A child proof and a raw signature are separate populations with no overlap in
+// cost, so one average describes neither. Tracking them apart lets a group be
+// sized in raw-signature units while a child is charged what it actually costs.
 type unitCostEstimator struct {
-	perUnitSeconds  float64
+	perRawSeconds   float64
+	perChildSeconds float64
 	perGroupSeconds float64
 }
 
@@ -164,7 +175,7 @@ func newUnitCostEstimator() *unitCostEstimator {
 	// cost directly (nextGroupDuration falls back to the seed until then). This
 	// makes the bound react within one group when proofs suddenly cost seconds,
 	// rather than easing toward it over many sessions.
-	return &unitCostEstimator{perUnitSeconds: seedPerUnitSeconds}
+	return &unitCostEstimator{perRawSeconds: seedPerRawSeconds, perChildSeconds: seedPerChildSeconds}
 }
 
 // nextGroupDuration estimates preparation plus proving time for admission after
@@ -192,31 +203,61 @@ func (e *unitCostEstimator) observeGroup(duration time.Duration) {
 	e.perGroupSeconds = alpha*duration.Seconds() + (1-alpha)*e.perGroupSeconds
 }
 
-// maxUnitsWithin reports how many units fit in the remaining budget at the current
-// estimate. It never returns below the spec minimum of two, so a group can always
-// still produce a valid aggregate.
+// maxUnitsWithin reports how many raw-signature units fit in the remaining
+// budget at the current estimate. It never returns below the spec minimum of
+// two, so a group can always still produce a valid aggregate.
 func (e *unitCostEstimator) maxUnitsWithin(budget time.Duration) int {
-	if e == nil || e.perUnitSeconds <= 0 || budget <= 0 {
+	if e == nil || e.perRawSeconds <= 0 || budget <= 0 {
 		return 2
 	}
-	fit := int(budget.Seconds() / e.perUnitSeconds)
+	fit := int(budget.Seconds() / e.perRawSeconds)
 	if fit < 2 {
 		return 2
 	}
 	return fit
 }
 
-// observe folds a completed aggregation's realized per-unit cost into the estimate
-// with an exponential moving average, damping single-pass noise. Under Shadow the
+// childUnitCost prices one child proof in raw-signature units. Charging a child
+// a single unit, as if it were one more signature, is what let a group spend its
+// whole allowance on recursive inputs that cost several times as much.
+func (e *unitCostEstimator) childUnitCost() int {
+	if e == nil || e.perRawSeconds <= 0 || e.perChildSeconds <= 0 {
+		return 1
+	}
+	cost := int(math.Ceil(e.perChildSeconds / e.perRawSeconds))
+	if cost < 1 {
+		return 1
+	}
+	return cost
+}
+
+// observe folds a completed aggregation's realized cost into the estimates with
+// an exponential moving average, damping single-pass noise. Under Shadow the
 // duration includes the modeled prover sleep, so the estimate calibrates to the
 // simulated cost just as it would to real hardware.
-func (e *unitCostEstimator) observe(duration time.Duration, units int) {
-	if e == nil || units <= 0 || duration <= 0 {
+//
+// A raw-only group prices raw signatures directly. A group carrying children
+// attributes the raw share at the current raw estimate and charges what is left
+// to the children, which is well conditioned because raw-only groups are the
+// common case once selection is raw-first.
+func (e *unitCostEstimator) observe(duration time.Duration, rawCount, childCount int) {
+	if e == nil || duration <= 0 || rawCount+childCount <= 0 {
 		return
 	}
 	const alpha = 0.3
-	sample := duration.Seconds() / float64(units)
-	e.perUnitSeconds = alpha*sample + (1-alpha)*e.perUnitSeconds
+	if childCount == 0 {
+		sample := duration.Seconds() / float64(rawCount)
+		e.perRawSeconds = alpha*sample + (1-alpha)*e.perRawSeconds
+		return
+	}
+	residual := duration.Seconds() - float64(rawCount)*e.perRawSeconds
+	if residual <= 0 {
+		// The group came in under what its raw signatures alone were estimated
+		// to cost, so it says nothing about the children it carried.
+		return
+	}
+	sample := residual / float64(childCount)
+	e.perChildSeconds = alpha*sample + (1-alpha)*e.perChildSeconds
 }
 
 func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, maxGroups int, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
@@ -297,6 +338,7 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 			// only fill gaps left by the budgeted raw inputs.
 			remaining := estimator.maxUnitsWithin(time.Until(deadline))
 
+			childCost := estimator.childUnitCost()
 			covered := make(map[uint64]bool)
 
 			if gossipEntry != nil && len(gossipEntry.Signatures) > 0 {
@@ -340,8 +382,8 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 				}
 			}
 
-			childIDs := selectChildProofs(newEntry, snap.headState, childProofsBuf, covered, cache, &remaining)
-			childIDs = append(childIDs, selectChildProofs(knownEntry, snap.headState, childProofsBuf, covered, cache, &remaining)...)
+			childIDs := selectChildProofs(newEntry, snap.headState, childProofsBuf, covered, cache, &remaining, childCost, len(*rawIDsBuf))
+			childIDs = append(childIDs, selectChildProofs(knownEntry, snap.headState, childProofsBuf, covered, cache, &remaining, childCost, len(*rawIDsBuf))...)
 			childCovered := make(map[uint64]bool, len(childIDs))
 			for _, vid := range childIDs {
 				childCovered[vid] = true
@@ -396,7 +438,7 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 				skips.add(metrics.AggGroupSkipError)
 				return
 			}
-			estimator.observe(aggDuration, len(*rawIDsBuf)+len(*childProofsBuf))
+			estimator.observe(aggDuration, len(*rawIDsBuf), len(*childProofsBuf))
 
 			allIDs := make([]uint64, 0, len(covered))
 			for vid := range covered {
