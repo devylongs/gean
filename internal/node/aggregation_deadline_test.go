@@ -48,3 +48,42 @@ func TestAggregationDeadlineAnchorsToIntervalFour(t *testing.T) {
 		t.Fatalf("late dispatch window = %v, want a usable window", window)
 	}
 }
+
+// An aggregator only receives the subnets it joined, so measuring the early
+// trigger's quorum against the whole registry makes it unreachable for anything
+// but a node covering every subnet — the early path then never fires and the
+// head start it exists to give is never taken.
+func TestExpectedVotersPerSlotFollowsSubscribedSubnets(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		validators uint64
+		committees uint64
+		subnets    []uint64
+		want       uint64
+	}{
+		{name: "single committee", validators: 12, committees: 1, want: 12},
+		{name: "all subnets subscribed", validators: 12, committees: 4, subnets: []uint64{0, 1, 2, 3}, want: 12},
+		{name: "no subnets configured", validators: 12, committees: 4, want: 12},
+		{name: "one of four", validators: 12, committees: 4, subnets: []uint64{2}, want: 3},
+		{name: "two of four", validators: 12, committees: 4, subnets: []uint64{0, 3}, want: 6},
+		{name: "uneven registry", validators: 10, committees: 4, subnets: []uint64{0}, want: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &Engine{
+				numValidators:      tc.validators,
+				CommitteeCount:     tc.committees,
+				AggregateSubnetIDs: tc.subnets,
+			}
+			if got := e.expectedVotersPerSlot(); got != tc.want {
+				t.Fatalf("voters=%d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	// The quorum a single-subnet aggregator must reach has to be reachable from
+	// the votes it can actually receive.
+	e := &Engine{numValidators: 12, CommitteeCount: 4, AggregateSubnetIDs: []uint64{1}}
+	if q := earlyAggregationQuorum(e.expectedVotersPerSlot()); uint64(q) > e.expectedVotersPerSlot() {
+		t.Fatalf("quorum %d exceeds the %d votes this node can receive", q, e.expectedVotersPerSlot())
+	}
+}

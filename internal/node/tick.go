@@ -191,7 +191,7 @@ func (e *Engine) maybeEarlyAggregate(nowMs uint64) {
 	// justification. Scoped to the slot, the threshold is reached only in late
 	// interval 1 once votes are in — a modest proving lead that still carries
 	// decisive weight, with the interval-2 dispatch as the fallback below quorum.
-	if e.Store.AttestationSignatures.SignatureCountForSlot(slot) < earlyAggregationQuorum(e.numValidators) {
+	if e.Store.AttestationSignatures.SignatureCountForSlot(slot) < earlyAggregationQuorum(e.expectedVotersPerSlot()) {
 		return
 	}
 	e.dispatchAggregationCycle(nowMs, slot, isAgg)
@@ -201,8 +201,35 @@ func (e *Engine) maybeEarlyAggregate(nowMs uint64) {
 // the fork choice uses for justification. At that many collected votes an early
 // aggregate already carries finalizing weight, so proving it ahead of interval 2
 // is worthwhile.
-func earlyAggregationQuorum(numValidators uint64) int {
-	return int((2*numValidators + 2) / 3)
+func earlyAggregationQuorum(voters uint64) int {
+	return int((2*voters + 2) / 3)
+}
+
+// expectedVotersPerSlot is how many validators this node can expect to hear from
+// in a slot: those assigned to the subnets it subscribes to. A validator votes on
+// subnet index % CommitteeCount, and the node only receives the subnets it joined.
+//
+// Measuring the quorum against the whole registry instead makes it unreachable
+// for any aggregator covering a subset of subnets, so the early path never fires
+// and the head start it exists to give is never taken. With one committee, or an
+// aggregator subscribed to every subnet, this is the whole registry as before.
+func (e *Engine) expectedVotersPerSlot() uint64 {
+	total := e.numValidators
+	committees := e.CommitteeCount
+	if committees <= 1 || len(e.AggregateSubnetIDs) == 0 || uint64(len(e.AggregateSubnetIDs)) >= committees {
+		return total
+	}
+	subscribed := make(map[uint64]bool, len(e.AggregateSubnetIDs))
+	for _, id := range e.AggregateSubnetIDs {
+		subscribed[id] = true
+	}
+	var voters uint64
+	for vid := range total {
+		if subscribed[vid%committees] {
+			voters++
+		}
+	}
+	return voters
 }
 
 func (e *Engine) runAttestationInterval(currentSlot uint64) {
