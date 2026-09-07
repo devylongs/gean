@@ -143,13 +143,15 @@ func (e *Engine) dispatchAggregationCycle(nowMs, currentSlot uint64, isAggregato
 // past the promotion it was produced for rather than come out of its window.
 func (e *Engine) aggregationDeadline(nowMs uint64) time.Time {
 	intoSlot := e.millisIntoSlot(nowMs)
-	window := time.Duration(aggregationDeadlineOffset-intoSlot) * time.Millisecond
+	// Dispatch only runs at intervals 1 and 2, so a slot position at or past the
+	// boundary is unreachable in practice. Handle it before subtracting: these
+	// are unsigned milliseconds, so the difference would wrap rather than go
+	// negative. Hand back a usable window instead of an expired deadline, which
+	// the worker reads as "stop before the first group".
 	if intoSlot >= aggregationDeadlineOffset {
-		// Dispatch only runs at intervals 1 and 2, so this is unreachable in
-		// practice. Hand back a usable window rather than an expired deadline,
-		// which the worker would read as "stop before the first group".
-		window = types.MillisecondsPerInterval * time.Millisecond
+		return time.UnixMilli(int64(nowMs)).Add(types.MillisecondsPerInterval * time.Millisecond)
 	}
+	window := time.Duration(aggregationDeadlineOffset-intoSlot) * time.Millisecond
 	// Anchored to the tick's own timestamp rather than a fresh clock read, so
 	// the deadline is the slot boundary itself and does not drift by however
 	// long the tick took to reach here.
