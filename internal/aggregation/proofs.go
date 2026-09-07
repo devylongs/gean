@@ -2,6 +2,7 @@ package aggregation
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
@@ -23,9 +24,10 @@ const maxChildProofsPerGroup = 2
 // The cap counts children already in the slice, so it holds across the separate
 // new-payload and known-payload passes that share one group's inputs.
 //
-// childCost prices one child in raw-signature units, and rawCount is how many
-// raw signatures the group already holds. Two children are exempt from that
-// price, for two different reasons:
+// childCost is the wall time one child is expected to add, charged against the
+// window still left in the session; rawCount is how many raw signatures the
+// group already holds. Two children are exempt from that charge, for two
+// different reasons:
 //
 //   - Until rawCount+children reaches two the group is not yet spec-viable, so
 //     charging for those children could leave it unable to produce anything.
@@ -47,16 +49,16 @@ func selectChildProofs(
 	children *[]xmss.ChildProof,
 	covered map[uint64]bool,
 	cache *xmss.PubKeyCache,
-	remaining *int,
-	childCost int,
+	remaining *time.Duration,
+	childCost time.Duration,
 	rawCount int,
 ) (selectedIDs []uint64) {
 	if entry == nil || state == nil || cache == nil || len(entry.Proofs) == 0 {
 		return
 	}
 
-	if childCost < 1 {
-		childCost = 1
+	if childCost <= 0 {
+		childCost = time.Duration(seedPerChildSeconds * float64(time.Second))
 	}
 
 	used := make([]bool, len(entry.Proofs))

@@ -2,6 +2,7 @@ package aggregation
 
 import (
 	"testing"
+	"time"
 
 	"github.com/geanlabs/gean/internal/store"
 	"github.com/geanlabs/gean/internal/types"
@@ -21,8 +22,8 @@ func TestSelectChildProofsSkipsOutOfRangeParticipant(t *testing.T) {
 
 	var children []xmss.ChildProof
 	covered := make(map[uint64]bool)
-	remaining := 8
-	selectChildProofs(entry, state, &children, covered, xmss.NewPubKeyCache(), &remaining, 1, 0)
+	remaining := 8 * time.Second
+	selectChildProofs(entry, state, &children, covered, xmss.NewPubKeyCache(), &remaining, time.Second, 0)
 
 	if len(children) != 0 {
 		t.Fatalf("children=%d, want 0", len(children))
@@ -44,13 +45,13 @@ func TestSelectChildProofsAdmitsFirstChildThenPricesTheRest(t *testing.T) {
 
 	for _, tc := range []struct {
 		name      string
-		remaining int
-		childCost int
+		remaining time.Duration
+		childCost time.Duration
 		want      int
 	}{
-		{name: "no_budget_still_admits_one", remaining: 0, childCost: 5, want: 1},
-		{name: "budget_admits_both", remaining: 20, childCost: 5, want: 2},
-		{name: "budget_short_of_second", remaining: 3, childCost: 5, want: 1},
+		{name: "no_budget_still_admits_one", remaining: 0, childCost: 5 * time.Second, want: 1},
+		{name: "budget_admits_both", remaining: 20 * time.Second, childCost: 5 * time.Second, want: 2},
+		{name: "budget_short_of_second", remaining: 3 * time.Second, childCost: 5 * time.Second, want: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := &store.PayloadEntry{Proofs: []*types.SingleMessageAggregate{proof(0), proof(1)}}
@@ -88,10 +89,10 @@ func TestSelectChildProofsCapsChildrenPerGroup(t *testing.T) {
 
 	var children []xmss.ChildProof
 	covered := map[uint64]bool{}
-	remaining := 100
+	remaining := 100 * time.Second
 
-	selectChildProofs(newEntry, state, &children, covered, cache, &remaining, 1, 0)
-	selectChildProofs(knownEntry, state, &children, covered, cache, &remaining, 1, 0)
+	selectChildProofs(newEntry, state, &children, covered, cache, &remaining, time.Second, 0)
+	selectChildProofs(knownEntry, state, &children, covered, cache, &remaining, time.Second, 0)
 
 	if len(children) != maxChildProofsPerGroup {
 		t.Fatalf("children=%d, want %d", len(children), maxChildProofsPerGroup)

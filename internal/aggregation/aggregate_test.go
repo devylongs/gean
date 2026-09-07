@@ -99,76 +99,55 @@ func TestAggregateFromSnapshotZeroDeadlineProcessesAll(t *testing.T) {
 	}
 }
 
-func TestUnitCostEstimatorMaxUnitsWithin(t *testing.T) {
-	e := newUnitCostEstimator() // seed 0.1s/unit
-
-	if got := e.maxUnitsWithin(time.Second); got != 10 {
-		t.Fatalf("maxUnitsWithin(1s)=%d, want 10", got)
-	}
-	// Never below the spec minimum of two, even for a tiny or expired budget.
-	if got := e.maxUnitsWithin(time.Millisecond); got != 2 {
-		t.Fatalf("maxUnitsWithin(1ms)=%d, want 2 (floor)", got)
-	}
-	if got := e.maxUnitsWithin(-time.Second); got != 2 {
-		t.Fatalf("maxUnitsWithin(-1s)=%d, want 2 (floor)", got)
-	}
-}
-
-func TestUnitCostEstimatorObserveConverges(t *testing.T) {
-	e := newUnitCostEstimator() // seed 0.1s per raw signature
-
-	// A cheaper-than-seed observation must pull the estimate down, letting more
-	// units fit the budget on the next pass.
-	before := e.maxUnitsWithin(time.Second)
-	for range 20 {
-		e.observe(200*time.Millisecond, 10, 0) // 0.02s per raw signature
-	}
-	after := e.maxUnitsWithin(time.Second)
-	if after <= before {
-		t.Fatalf("estimate did not converge down: before=%d after=%d units/sec", before, after)
-	}
-
-	// Degenerate inputs are ignored, not divided by.
-	steady := e.perRawSeconds
-	e.observe(0, 10, 0)
-	e.observe(time.Second, 0, 0)
-	if e.perRawSeconds != steady {
-		t.Fatalf("degenerate observe mutated estimate: %v -> %v", steady, e.perRawSeconds)
-	}
-}
-
-// A child proof and a raw signature are separate cost populations. Charging a
-// child one unit, as though it were one more signature, let a group spend its
-// whole allowance on recursive inputs costing several times as much.
-func TestUnitCostEstimatorPricesChildrenApartFromRaw(t *testing.T) {
+// The cost of a proof is the proof, not what it covers: two-signature groups
+// measured 2.0-5.2s on a 16-core host. Dividing that by the signature count is
+// what previously concluded a signature costs seconds and pinned every later
+// group at the two-signature floor.
+func TestUnitCostEstimatorLearnsFixedCostPerProof(t *testing.T) {
 	e := newUnitCostEstimator()
 
-	// Raw-only groups price the raw signature directly.
-	for range 20 {
-		e.observe(200*time.Millisecond, 10, 0) // 0.02s each
+	for range 10 {
+		e.observeGroup(4*time.Second, 0)
 	}
 
-	// A group of the same 10 signatures plus one child took 2s, so the child
-	// accounts for the 1.8s the raw share does not explain.
-	for range 20 {
-		e.observe(2*time.Second, 10, 1)
+	if got := e.nextGroupDuration(); got < 3800*time.Millisecond || got > 4200*time.Millisecond {
+		t.Fatalf("nextGroupDuration=%v, want about 4s (the whole proof, not a share of it)", got)
+	}
+}
+
+// Children are the part that does scale, so they are charged whatever the fixed
+// cost does not explain.
+func TestUnitCostEstimatorChargesChildrenTheResidual(t *testing.T) {
+	e := newUnitCostEstimator()
+
+	for range 10 {
+		e.observeGroup(2*time.Second, 0)
+	}
+	for range 10 {
+		e.observeGroup(5*time.Second, 1)
 	}
 
-	if e.perRawSeconds > 0.05 {
-		t.Fatalf("raw estimate polluted by the recursive group: %v", e.perRawSeconds)
+	if got := e.childDuration(); got < 2500*time.Millisecond || got > 3500*time.Millisecond {
+		t.Fatalf("childDuration=%v, want about 3s (5s group less the 2s baseline)", got)
 	}
-	if e.perChildSeconds < 1.0 {
-		t.Fatalf("child estimate = %v, want the unexplained residual (~1.8s)", e.perChildSeconds)
-	}
-	if got := e.childUnitCost(); got < 20 {
-		t.Fatalf("childUnitCost = %d, want a child priced well above one signature", got)
+	if got := e.nextGroupDuration(); got > 2500*time.Millisecond {
+		t.Fatalf("nextGroupDuration=%v, want the recursive group kept out of the fixed cost", got)
 	}
 
-	// A group cheaper than its raw share alone says nothing about its children.
-	steady := e.perChildSeconds
-	e.observe(time.Millisecond, 10, 1)
-	if e.perChildSeconds != steady {
-		t.Fatalf("under-cost group mutated the child estimate: %v -> %v", steady, e.perChildSeconds)
+	// A group cheaper than a raw-only one says nothing about its children.
+	steady := e.childDuration()
+	e.observeGroup(time.Millisecond, 1)
+	if e.childDuration() != steady {
+		t.Fatalf("under-cost group moved the child estimate: %v -> %v", steady, e.childDuration())
+	}
+
+	// With no baseline yet there is nothing to subtract, so a recursive group is
+	// ignored rather than charged the whole duration.
+	fresh := newUnitCostEstimator()
+	before := fresh.childDuration()
+	fresh.observeGroup(9*time.Second, 1)
+	if fresh.childDuration() != before {
+		t.Fatalf("child estimate moved without a fixed-cost baseline: %v -> %v", before, fresh.childDuration())
 	}
 }
 

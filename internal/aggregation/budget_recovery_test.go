@@ -38,9 +38,8 @@ func TestAggregationBudgetRecovery(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				e := newUnitCostEstimator()
 				for _, d := range tc.observations {
-					e.observeGroup(d)
+					e.observeGroup(d, 0)
 				}
-				e.perRawSeconds = 1
 				cache := xmss.NewPubKeyCache()
 				defer cache.Close()
 				for session := 0; session < 5; session++ {
@@ -48,7 +47,10 @@ func TestAggregationBudgetRecovery(t *testing.T) {
 					calls := 0
 					prove := func(pks []xmss.CPubKey, sigs []xmss.CSig, children []xmss.ChildProof, root [32]byte, slot uint32) ([]byte, error) {
 						calls++
-						if slot != 6 || len(pks) != 2 || len(sigs) != 2 || len(children) != 0 {
+						// All three of the group's signatures, not the two the
+						// old per-signature budget floor allowed: the proof costs
+						// the same either way.
+						if slot != 6 || len(pks) != 3 || len(sigs) != 3 || len(children) != 0 {
 							t.Fatalf("unexpected inputs: slot=%d raw=%d children=%d", slot, len(sigs), len(children))
 						}
 						time.Sleep(time.Second)
@@ -66,14 +68,18 @@ func TestAggregationBudgetRecovery(t *testing.T) {
 							t.Fatalf("failure changed results/estimate or lost skip: %v", skips)
 						}
 					} else {
-						if len(aggs) != 1 || len(payloads) != 1 || len(deletes) != 2 {
+						if len(aggs) != 1 || len(payloads) != 1 || len(deletes) != 3 {
 							t.Fatalf("lost partial results: aggs=%d payloads=%d deletes=%d", len(aggs), len(payloads), len(deletes))
 						}
 						if e.nextGroupDuration() >= before {
 							t.Fatal("successful attempt did not recalibrate")
 						}
-						if types.BitlistCount(aggs[0].Proof.Participants) != 2 || deletes[0].ValidatorID != 0 || deletes[1].ValidatorID != 1 {
-							t.Fatal("deferred signature included or retired")
+						// Every signature the group held is covered and retired:
+						// the proof costs the same whether it carries two or
+						// three, so none is left behind for a later session.
+						if types.BitlistCount(aggs[0].Proof.Participants) != 3 ||
+							deletes[0].ValidatorID != 0 || deletes[1].ValidatorID != 1 || deletes[2].ValidatorID != 2 {
+							t.Fatal("group did not cover and retire every signature it held")
 						}
 					}
 				}
