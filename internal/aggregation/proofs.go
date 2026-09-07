@@ -8,9 +8,20 @@ import (
 	"github.com/geanlabs/gean/xmss"
 )
 
+// maxChildProofsPerGroup bounds how many child proofs one group may fold in.
+// A child is a recursive input: measured on a 16-core host, a group carrying one
+// costs 1.68-2.96s against 0.31-0.91s for raw signatures alone, with no overlap
+// between the ranges. The cap bounds the worst case a single group can spend
+// once raw-first selection has already removed most recursion. ethlambda and
+// lantern both settled on the same value.
+const maxChildProofsPerGroup = 2
+
 // selectChildProofs folds coverage-adding child proofs into the aggregation
 // inputs. covered may be seeded with raw signers. The returned participant IDs
 // identify raw inputs that must be removed to avoid raw/child double inclusion.
+//
+// The cap counts children already in the slice, so it holds across the separate
+// new-payload and known-payload passes that share one group's inputs.
 //
 // Selection is greedy on coverage: each round takes the proof adding the most
 // still-uncovered validators, matching leanSpec's select_proofs_for_coverage.
@@ -31,7 +42,7 @@ func selectChildProofs(
 
 	used := make([]bool, len(entry.Proofs))
 	for {
-		if *remaining <= 0 {
+		if *remaining <= 0 || len(*children) >= maxChildProofsPerGroup {
 			return
 		}
 
