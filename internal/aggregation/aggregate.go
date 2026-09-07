@@ -20,10 +20,22 @@ import (
 type aggregationGroup struct {
 	dataRoot   [32]byte
 	targetSlot uint64
+	// currentSlot marks a vote cast in the slot being aggregated for, as opposed
+	// to a backlog entry carried over from an earlier one.
+	currentSlot bool
 }
 
-// orderedGroups lists the snapshot's aggregation work frontier-first: by
-// ascending target slot. Finalization advances only when the checkpoint
+// orderedGroups lists the snapshot's aggregation work current-slot first, then
+// frontier-first by ascending target slot.
+//
+// This slot's votes are the only ones with a deadline: they must be aggregated
+// and gossiped in time to reach the next block, while a backlog entry loses
+// nothing by waiting a slot. Ordering purely by target slot puts the oldest
+// backlog ahead of them, so a session capped at two groups can spend both on
+// stale work and let the current slot's own votes go unaggregated.
+//
+// Within each tier the frontier rule stands. Finalization advances only when
+// the checkpoint
 // immediately after the current source is justified (leanSpec
 // process_attestations finalizes a source when no justifiable slot sits between
 // it and its justified target). So when a backlog does not all fit the session
@@ -116,9 +128,16 @@ func orderedGroups(snap *Snapshot, skips groupSkips) []aggregationGroup {
 				continue
 			}
 		}
-		groups = append(groups, aggregationGroup{dataRoot: dr, targetSlot: targetSlot})
+		groups = append(groups, aggregationGroup{
+			dataRoot:    dr,
+			targetSlot:  targetSlot,
+			currentSlot: attData.Slot == snap.slot,
+		})
 	}
 	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].currentSlot != groups[j].currentSlot {
+			return groups[i].currentSlot
+		}
 		if groups[i].targetSlot != groups[j].targetSlot {
 			return groups[i].targetSlot < groups[j].targetSlot
 		}

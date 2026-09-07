@@ -188,3 +188,26 @@ func TestAggregateFromSnapshotBudgetStopCountsEveryDeferredGroup(t *testing.T) {
 		t.Fatalf("budget skips = %d, want 3 (one per deferred group)", got)
 	}
 }
+
+// This slot's votes are the only ones with a deadline: they must be aggregated
+// in time to reach the next block, while backlog entries lose nothing by waiting
+// a slot. With a session capped at two groups, ordering purely by target slot
+// would spend both on the oldest backlog and leave the current slot unaggregated.
+func TestOrderedGroupsPutsCurrentSlotFirst(t *testing.T) {
+	snap := aggregateTestSnapshot(10, 11, 12)
+	snap.slot = 12
+
+	groups := orderedGroups(snap, groupSkips{})
+	if len(groups) != 3 {
+		t.Fatalf("groups=%d, want 3", len(groups))
+	}
+	if !groups[0].currentSlot || groups[0].targetSlot != 12 {
+		t.Fatalf("first group targets slot %d (current=%v), want the current slot",
+			groups[0].targetSlot, groups[0].currentSlot)
+	}
+	// Behind it, the frontier rule still holds: oldest unjustified target first.
+	if groups[1].targetSlot != 10 || groups[2].targetSlot != 11 {
+		t.Fatalf("backlog order = %d,%d, want ascending target 10,11",
+			groups[1].targetSlot, groups[2].targetSlot)
+	}
+}
