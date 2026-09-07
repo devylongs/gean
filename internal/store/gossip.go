@@ -22,12 +22,20 @@ type AttestationDataEntry struct {
 }
 
 type AttestationSignatureMap struct {
-	mu   sync.Mutex
-	data map[[32]byte]*AttestationDataEntry
+	mu    sync.Mutex
+	data  map[[32]byte]*AttestationDataEntry
+	order [][32]byte
+	total int
+	// capacity bounds total signatures held, not data roots. Zero disables the
+	// bound, which is only useful in tests that assert prune behaviour.
+	capacity int
 }
 
-func NewAttestationSignatureMap() AttestationSignatureMap {
-	return AttestationSignatureMap{data: make(map[[32]byte]*AttestationDataEntry)}
+func NewAttestationSignatureMap(capacity int) AttestationSignatureMap {
+	return AttestationSignatureMap{
+		data:     make(map[[32]byte]*AttestationDataEntry),
+		capacity: capacity,
+	}
 }
 
 func (m *AttestationSignatureMap) Insert(dataRoot [32]byte, data *types.AttestationData, validatorID uint64, sig [types.SignatureSize]byte) {
@@ -44,11 +52,42 @@ func (m *AttestationSignatureMap) Insert(dataRoot [32]byte, data *types.Attestat
 	if !ok {
 		entry = &AttestationDataEntry{Data: copyAttestationData(data)}
 		m.data[dataRoot] = entry
+		m.order = append(m.order, dataRoot)
 	}
 	entry.Signatures = append(entry.Signatures, AttestationSignatureEntry{
 		ValidatorID: validatorID,
 		Signature:   sig,
 	})
+	m.total++
+	m.evictLocked()
+}
+
+// evictLocked drops whole data roots oldest-first until the signature count is
+// back inside capacity. Evicting by root rather than by individual signature
+// keeps a surviving root's votes complete, which is what an aggregate needs.
+func (m *AttestationSignatureMap) evictLocked() {
+	if m.capacity <= 0 {
+		return
+	}
+	for m.total > m.capacity && len(m.order) > 0 {
+		oldest := m.order[0]
+		m.order = m.order[1:]
+		if entry, ok := m.data[oldest]; ok {
+			m.total -= len(entry.Signatures)
+			delete(m.data, oldest)
+		}
+	}
+}
+
+// dropRootLocked removes a root from both the map and the insertion order.
+func (m *AttestationSignatureMap) dropRootLocked(root [32]byte) {
+	delete(m.data, root)
+	for i, r := range m.order {
+		if r == root {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			return
+		}
+	}
 }
 
 func (m *AttestationSignatureMap) Delete(keys []AttestationDeleteKey) {
@@ -59,15 +98,19 @@ func (m *AttestationSignatureMap) Delete(keys []AttestationDeleteKey) {
 		if !ok {
 			continue
 		}
+		removed := 0
 		filtered := entry.Signatures[:0]
 		for _, sig := range entry.Signatures {
 			if sig.ValidatorID != key.ValidatorID {
 				filtered = append(filtered, sig)
+				continue
 			}
+			removed++
 		}
+		m.total -= removed
 		entry.Signatures = filtered
 		if len(entry.Signatures) == 0 {
-			delete(m.data, key.DataRoot)
+			m.dropRootLocked(key.DataRoot)
 		}
 	}
 }
@@ -78,7 +121,10 @@ func (m *AttestationSignatureMap) PruneBelow(finalizedSlot uint64) int {
 	pruned := 0
 	for root, entry := range m.data {
 		if entry == nil || entry.Data == nil || entry.Data.Slot <= finalizedSlot {
-			delete(m.data, root)
+			if entry != nil {
+				m.total -= len(entry.Signatures)
+			}
+			m.dropRootLocked(root)
 			pruned++
 		}
 	}
