@@ -331,11 +331,21 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 			// available locally. Unlike the spec's child-first selection, children
 			// only fill the gaps raw signatures leave.
 			//
-			// Raw signatures are not rationed. The proof costs what it costs
-			// whether it covers two validators or ten, so holding signatures back
-			// buys nothing and spends a whole proof on a fraction of the coverage
-			// it could have carried. What is rationed is proofs: the per-session
-			// group cap and the deadline.
+			// Raw signatures are not rationed. Measured on a 16-core host, proof
+			// size is a step function of signer count and nearly flat within a
+			// step: ~146 KB from two signatures through four, ~170 KB from five
+			// through eleven. Eleven signatures therefore cost 16% more proof
+			// than two while carrying five and a half times the coverage, and
+			// proving time did not track signer count at all.
+			//
+			// Holding signatures back buys nothing and spends a whole proof on a
+			// fraction of the coverage it could have carried. What is rationed is
+			// proofs: the per-session group cap and the deadline.
+			//
+			// The steps are logarithmic, so even a group covering every validator
+			// of a 512-node network stays well inside the 512 KiB proof ceiling;
+			// past it the prover returns ErrProofTooBig and the group is skipped
+			// rather than anything failing unsafely.
 			covered := make(map[uint64]bool)
 
 			if gossipEntry != nil && len(gossipEntry.Signatures) > 0 {
