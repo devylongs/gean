@@ -104,8 +104,11 @@ func ValidateAttestationData(s *store.ConsensusStore, data *types.AttestationDat
 		return errTargetNotAncestorOfHead()
 	}
 	// Fork choice only ever descends from the finalized block, so an orphaned head
-	// carries no weight. Rejecting it at admission mirrors the prune predicate and
-	// keeps a re-gossiped below-finalized aggregate from re-entering the pool.
+	// carries no weight. Rejecting it at admission keeps a re-gossiped
+	// below-finalized aggregate from re-entering the pool. This is leanSpec's
+	// prune_stale_attestation_data predicate (head above finalized, and
+	// descended from it); the store's own PruneBelow currently keys on slot
+	// alone, so the two are not yet the same test.
 	if finalized := s.LatestFinalized(); finalized != nil && !checkpointIsAncestor(s, finalized, data.Head) {
 		return errHeadNotDescendantOfFinalized()
 	}

@@ -42,10 +42,13 @@ func (e *Engine) onTick() {
 
 	if currentInterval == 2 {
 		e.reportAggStartNewCoverage()
-		// Dispatch unconditionally, matching leanSpec's interval-2 aggregation.
-		// Contention with an upcoming proposal duty is handled by the proving
-		// gate's proposal priority, not by skipping the cycle: a sole aggregator
-		// that also proposes next would otherwise never aggregate at all.
+		// Dispatch unconditionally, matching leanSpec's interval-2 aggregation:
+		// a sole aggregator that also proposes next would otherwise never
+		// aggregate at all. The proving gate's proposal priority only defers
+		// the *next* background acquire; it cannot preempt a session already
+		// holding the token, so a proposal duty landing mid-session waits for
+		// the whole session. What bounds that wait is the per-session group
+		// cap, not the gate.
 		e.dispatchAggregationCycle(currentSlot, isAgg)
 	}
 

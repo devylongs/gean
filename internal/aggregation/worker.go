@@ -70,9 +70,10 @@ func RunWorker(
 			cancelAcquire()
 
 			// The session budget bounds how long the gate is held, not which
-			// results survive: groups are proven newest-first and every
-			// completed aggregate is applied and published even when the
-			// budget cuts the session short. Discarding finished aggregates
+			// results survive: groups are proven frontier-first (ascending
+			// target slot, see orderedGroups) and every completed aggregate is
+			// applied and published even when the budget cuts the session
+			// short. Discarding finished aggregates
 			// (and their signature deletes) regrows the next snapshot until
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
