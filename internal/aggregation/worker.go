@@ -24,6 +24,10 @@ type Dispatch struct {
 	// means MaxGroupsPerSession; the dispatcher lowers it when this node
 	// proposes next slot and would otherwise wait on the session for the gate.
 	MaxGroups int
+	// Deadline is the instant the session must stop starting groups by, set by
+	// the dispatcher from the slot clock. Zero falls back to SessionBudget
+	// measured from when the worker acquires the prover.
+	Deadline time.Time
 }
 
 // SessionBudget caps one aggregation session's proving time. Dispatch fires
@@ -81,7 +85,14 @@ func RunWorker(
 			// (and their signature deletes) regrows the next snapshot until
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
-			aggs, payloads, deletes, truncated, skips := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), dispatch.MaxGroups, shadowRates, estimator)
+			deadline := dispatch.Deadline
+			if deadline.IsZero() {
+				deadline = workerStart.Add(SessionBudget)
+			}
+			// The window is what the dispatcher actually allowed, which is less
+			// than SessionBudget whenever the gate was held for a while.
+			budget := deadline.Sub(workerStart)
+			aggs, payloads, deletes, truncated, skips := aggregateFromSnapshot(dispatch.Snapshot, cache, deadline, dispatch.MaxGroups, shadowRates, estimator)
 			workerElapsed := time.Since(workerStart)
 			if gate != nil {
 				gate.Release(false)
@@ -92,14 +103,14 @@ func RunWorker(
 				case len(aggs) == 0:
 					// No output plus a budget stop is the actionable starvation case.
 					logger.Warn(logger.Signature, "aggregation session hit budget without output: slot=%d produced=0 duration=%v", dispatch.Slot, workerElapsed)
-				case workerElapsed > SessionBudget:
+				case workerElapsed > budget:
 					// A proof exceeded the wall-clock budget; keep this visible even
 					// though partial results were preserved and published.
-					logger.Warn(logger.Signature, "aggregation session overran budget: slot=%d produced=%d duration=%v budget=%v", dispatch.Slot, len(aggs), workerElapsed, SessionBudget)
+					logger.Warn(logger.Signature, "aggregation session overran budget: slot=%d produced=%d duration=%v budget=%v", dispatch.Slot, len(aggs), workerElapsed, budget)
 				default:
 					// Normal partial completion: the admission estimate stopped a
 					// later group while the completed output stayed within budget.
-					logger.Info(logger.Signature, "aggregation session truncated after partial output: slot=%d produced=%d duration=%v budget=%v", dispatch.Slot, len(aggs), workerElapsed, SessionBudget)
+					logger.Info(logger.Signature, "aggregation session truncated after partial output: slot=%d produced=%d duration=%v budget=%v", dispatch.Slot, len(aggs), workerElapsed, budget)
 				}
 			}
 			applyAggregationMutations(consensusStore, payloads, deletes)

@@ -6,7 +6,14 @@ import (
 	"github.com/geanlabs/gean/internal/aggregation"
 	"github.com/geanlabs/gean/internal/metrics"
 	"github.com/geanlabs/gean/internal/store"
+	"github.com/geanlabs/gean/internal/types"
 )
+
+// aggregationDeadlineOffset is how far into a slot an aggregation session must
+// be finished: the interval-4 boundary, where new payloads are promoted to
+// known and gossiped. Anything still proving past it misses the promotion it
+// was produced for.
+const aggregationDeadlineOffset = 4 * types.MillisecondsPerInterval
 
 func (e *Engine) onTick() {
 	now := time.Now()
@@ -49,7 +56,7 @@ func (e *Engine) onTick() {
 		// holding the token, so a proposal duty landing mid-session waits for
 		// the whole session. What bounds that wait is the per-session group
 		// cap, not the gate.
-		e.dispatchAggregationCycle(currentSlot, isAgg)
+		e.dispatchAggregationCycle(timestampMs, currentSlot, isAgg)
 	}
 
 	if currentInterval == 0 || currentInterval == 4 {
@@ -70,7 +77,7 @@ func (e *Engine) onTick() {
 	}
 }
 
-func (e *Engine) dispatchAggregationCycle(currentSlot uint64, isAggregator bool) {
+func (e *Engine) dispatchAggregationCycle(nowMs, currentSlot uint64, isAggregator bool) {
 	if !isAggregator {
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipNotAggregator)
 		return
@@ -112,13 +119,39 @@ func (e *Engine) dispatchAggregationCycle(currentSlot uint64, isAggregator bool)
 		maxGroups = aggregation.MaxGroupsWhenProposing
 	}
 	select {
-	case e.AggregationDispatchCh <- aggregation.Dispatch{Snapshot: snap, Slot: currentSlot, MaxGroups: maxGroups}:
+	case e.AggregationDispatchCh <- aggregation.Dispatch{
+		Snapshot:  snap,
+		Slot:      currentSlot,
+		MaxGroups: maxGroups,
+		Deadline:  e.aggregationDeadline(nowMs),
+	}:
 		e.aggregatedSlot = currentSlot
 		metrics.SetProvingQueueDepth("aggregation", len(e.AggregationDispatchCh))
 	default:
 		metrics.IncAggregationDispatchDropped()
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipSpawnFailed)
 	}
+}
+
+// aggregationDeadline is the wall-clock instant a session dispatched now must
+// stop by: this slot's interval-4 boundary. Measuring a fixed span from when
+// the worker starts instead gives the early-interval-1 path a deadline earlier
+// than the boundary, taking back most of the head start that path exists to
+// create, and lets time spent waiting on the proving gate extend the session
+// past the promotion it was produced for rather than come out of its window.
+func (e *Engine) aggregationDeadline(nowMs uint64) time.Time {
+	intoSlot := e.millisIntoSlot(nowMs)
+	window := time.Duration(aggregationDeadlineOffset-intoSlot) * time.Millisecond
+	if intoSlot >= aggregationDeadlineOffset {
+		// Dispatch only runs at intervals 1 and 2, so this is unreachable in
+		// practice. Hand back a usable window rather than an expired deadline,
+		// which the worker would read as "stop before the first group".
+		window = types.MillisecondsPerInterval * time.Millisecond
+	}
+	// Anchored to the tick's own timestamp rather than a fresh clock read, so
+	// the deadline is the slot boundary itself and does not drift by however
+	// long the tick took to reach here.
+	return time.UnixMilli(int64(nowMs)).Add(window)
 }
 
 // maybeEarlyAggregate starts the aggregation session in late interval 1, once this
@@ -161,7 +194,7 @@ func (e *Engine) maybeEarlyAggregate(nowMs uint64) {
 	if e.Store.AttestationSignatures.SignatureCountForSlot(slot) < earlyAggregationQuorum(e.numValidators) {
 		return
 	}
-	e.dispatchAggregationCycle(slot, isAgg)
+	e.dispatchAggregationCycle(nowMs, slot, isAgg)
 }
 
 // earlyAggregationQuorum is the 3SF supermajority ceil(2n/3) — the same threshold
