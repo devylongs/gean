@@ -167,3 +167,38 @@ func TestAttestationSignatureMapEvictsOldestRootAtCapacity(t *testing.T) {
 		t.Fatal("eviction damaged a surviving root")
 	}
 }
+
+// Gossip meshes deliver the same attestation more than once, and the
+// pending-attestation replay path re-enters the handler for buffered votes.
+// Storing a vote twice wastes memory and, worse, overstates how many distinct
+// validators have voted — the count the early-aggregation trigger reads.
+func TestAttestationSignatureMapIgnoresDuplicateValidator(t *testing.T) {
+	gsm := store.NewAttestationSignatureMap(0)
+	data := &types.AttestationData{
+		Slot:   1,
+		Head:   &types.Checkpoint{},
+		Target: &types.Checkpoint{Slot: 1},
+		Source: &types.Checkpoint{},
+	}
+	var root [32]byte
+	root[0] = 1
+
+	if gsm.Has(root, 0) {
+		t.Fatal("empty map reported a signature it does not hold")
+	}
+
+	gsm.Insert(root, data, 0, [types.SignatureSize]byte{})
+	gsm.Insert(root, data, 0, [types.SignatureSize]byte{})
+	gsm.Insert(root, data, 1, [types.SignatureSize]byte{})
+
+	snap := gsm.Snapshot()
+	if got := len(snap[root].Signatures); got != 2 {
+		t.Fatalf("signatures=%d, want 2 (one per validator)", got)
+	}
+	if !gsm.Has(root, 0) || !gsm.Has(root, 1) {
+		t.Fatal("stored signature not reported as held")
+	}
+	if gsm.Has(root, 2) {
+		t.Fatal("reported a signature that was never inserted")
+	}
+}

@@ -54,6 +54,16 @@ func (m *AttestationSignatureMap) Insert(dataRoot [32]byte, data *types.Attestat
 		m.data[dataRoot] = entry
 		m.order = append(m.order, dataRoot)
 	}
+	// One vote per validator per attestation data. Gossip meshes deliver the
+	// same attestation more than once, and the pending-attestation replay path
+	// re-enters the handler for buffered votes, so without this the same
+	// signature is stored repeatedly: wasted memory, and a vote count that
+	// overstates how many distinct validators have actually voted.
+	for _, existing := range entry.Signatures {
+		if existing.ValidatorID == validatorID {
+			return
+		}
+	}
 	entry.Signatures = append(entry.Signatures, AttestationSignatureEntry{
 		ValidatorID: validatorID,
 		Signature:   sig,
@@ -88,6 +98,24 @@ func (m *AttestationSignatureMap) dropRootLocked(root [32]byte) {
 			return
 		}
 	}
+}
+
+// Has reports whether this validator's signature for the given attestation data
+// is already held. Callers use it to skip re-verifying a duplicate: an XMSS
+// verification costs hundreds of milliseconds and the answer cannot change.
+func (m *AttestationSignatureMap) Has(dataRoot [32]byte, validatorID uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, ok := m.data[dataRoot]
+	if !ok {
+		return false
+	}
+	for _, sig := range entry.Signatures {
+		if sig.ValidatorID == validatorID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *AttestationSignatureMap) Delete(keys []AttestationDeleteKey) {
