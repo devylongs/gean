@@ -57,7 +57,7 @@ func TestAggregationBudgetRecovery(t *testing.T) {
 						}
 						return []byte{1}, nil
 					}
-					aggs, payloads, deletes, truncated, skips := aggregateFromSnapshotWithProver(budgetTestSnapshot(), cache, time.Now().Add(SessionBudget), shadow.Rates{}, e, prove)
+					aggs, payloads, deletes, truncated, skips := aggregateFromSnapshotWithProver(budgetTestSnapshot(), cache, time.Now().Add(SessionBudget), MaxGroupsPerSession, shadow.Rates{}, e, prove)
 					if calls != 1 || !truncated || skips[metrics.AggGroupSkipBudget] != 1 || skips[metrics.AggGroupSkipTooFewSigners] != 1 {
 						t.Fatalf("session=%d calls=%d truncated=%v skips=%v", session, calls, truncated, skips)
 					}
@@ -105,7 +105,7 @@ func TestAggregationBudgetDeadline(t *testing.T) {
 					time.Sleep(tc.proofTime)
 					return []byte{1}, nil
 				}
-				aggs, _, _, truncated, skips := aggregateFromSnapshotWithProver(budgetTestSnapshot(), cache, time.Now().Add(tc.deadline), shadow.Rates{}, newUnitCostEstimator(), prove)
+				aggs, _, _, truncated, skips := aggregateFromSnapshotWithProver(budgetTestSnapshot(), cache, time.Now().Add(tc.deadline), MaxGroupsPerSession, shadow.Rates{}, newUnitCostEstimator(), prove)
 				if calls != tc.wantCalls || len(aggs) != calls || truncated != tc.wantTruncated {
 					t.Fatalf("calls=%d aggs=%d truncated=%v skips=%v", calls, len(aggs), truncated, skips)
 				}

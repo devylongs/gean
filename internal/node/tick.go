@@ -93,7 +93,8 @@ func (e *Engine) dispatchAggregationCycle(currentSlot uint64, isAggregator bool)
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipOther)
 		return
 	}
-	if e.Store.GetState(e.Store.Head()) == nil {
+	headState := e.Store.GetState(e.Store.Head())
+	if headState == nil {
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipMissingState)
 		return
 	}
@@ -103,8 +104,15 @@ func (e *Engine) dispatchAggregationCycle(currentSlot uint64, isAggregator bool)
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipOther)
 		return
 	}
+	// A session holds the proving gate until it finishes, so a proposal duty
+	// next slot waits on it however the gate's priority flag is set. Prove one
+	// group in that case and leave the rest for the following session.
+	maxGroups := aggregation.MaxGroupsPerSession
+	if e.proposingAt(currentSlot+1, headState.NumValidators()) {
+		maxGroups = aggregation.MaxGroupsWhenProposing
+	}
 	select {
-	case e.AggregationDispatchCh <- aggregation.Dispatch{Snapshot: snap, Slot: currentSlot}:
+	case e.AggregationDispatchCh <- aggregation.Dispatch{Snapshot: snap, Slot: currentSlot, MaxGroups: maxGroups}:
 		e.aggregatedSlot = currentSlot
 		metrics.SetProvingQueueDepth("aggregation", len(e.AggregationDispatchCh))
 	default:

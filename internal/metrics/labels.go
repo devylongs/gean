@@ -30,6 +30,7 @@ const (
 	AggGroupSkipTargetJustified = "target_justified"
 	AggGroupSkipTooFewSigners   = "too_few_signers"
 	AggGroupSkipBudget          = "budget"
+	AggGroupSkipSessionCap      = "session_cap"
 	AggGroupSkipError           = "error"
 )
 
@@ -37,6 +38,7 @@ var aggregationGroupSkipReasons = []string{
 	AggGroupSkipTargetJustified,
 	AggGroupSkipTooFewSigners,
 	AggGroupSkipBudget,
+	AggGroupSkipSessionCap,
 	AggGroupSkipError,
 }
 

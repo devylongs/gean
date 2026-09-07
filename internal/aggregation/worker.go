@@ -20,6 +20,10 @@ type Publisher interface {
 type Dispatch struct {
 	Snapshot *Snapshot
 	Slot     uint64
+	// MaxGroups bounds how many groups this session hands to the prover. Zero
+	// means MaxGroupsPerSession; the dispatcher lowers it when this node
+	// proposes next slot and would otherwise wait on the session for the gate.
+	MaxGroups int
 }
 
 // SessionBudget caps one aggregation session's proving time. Dispatch fires
@@ -77,7 +81,7 @@ func RunWorker(
 			// (and their signature deletes) regrows the next snapshot until
 			// no session can ever finish inside a slot.
 			workerStart := time.Now()
-			aggs, payloads, deletes, truncated, skips := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), shadowRates, estimator)
+			aggs, payloads, deletes, truncated, skips := aggregateFromSnapshot(dispatch.Snapshot, cache, workerStart.Add(SessionBudget), dispatch.MaxGroups, shadowRates, estimator)
 			workerElapsed := time.Since(workerStart)
 			if gate != nil {
 				gate.Release(false)

@@ -136,6 +136,20 @@ const seedPerUnitSeconds = 0.1
 // seedPerGroupSeconds is used until a successful group supplies a wall-time sample.
 const seedPerGroupSeconds = 0.3
 
+// MaxGroupsPerSession bounds how many groups one session hands to the prover.
+// Without it a session costs whatever the backlog costs, which is how four
+// aggregators covering four subnets saturated a 16-core host and left the node
+// 129 slots behind. A count is a cruder bound than the wall-clock deadline, but
+// it is the one that holds before any proof has started, so the gate token is
+// never held for an unbounded stretch. ethlambda uses the same value.
+const MaxGroupsPerSession = 2
+
+// MaxGroupsWhenProposing applies in the slot before this node proposes. The
+// proving gate gives a proposal priority, but priority only defers the next
+// background acquire: a session already holding the token runs to completion,
+// so the proposal waits for it. One group bounds that wait.
+const MaxGroupsWhenProposing = 1
+
 // unitCostEstimator tracks observed aggregation-proving time so each pass can be
 // sized to the remaining session budget. The single-threaded worker holds one
 // across dispatches. No fixed cap would hold across machines and validator-set
@@ -205,11 +219,11 @@ func (e *unitCostEstimator) observe(duration time.Duration, units int) {
 	e.perUnitSeconds = alpha*sample + (1-alpha)*e.perUnitSeconds
 }
 
-func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
-	return aggregateFromSnapshotWithProver(snap, cache, deadline, shadowRates, estimator, xmss.AggregateWithChildren)
+func aggregateFromSnapshot(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, maxGroups int, shadowRates shadow.Rates, estimator *unitCostEstimator) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
+	return aggregateFromSnapshotWithProver(snap, cache, deadline, maxGroups, shadowRates, estimator, xmss.AggregateWithChildren)
 }
 
-func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, shadowRates shadow.Rates, estimator *unitCostEstimator, prove func([]xmss.CPubKey, []xmss.CSig, []xmss.ChildProof, [32]byte, uint32) ([]byte, error)) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
+func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, deadline time.Time, maxGroups int, shadowRates shadow.Rates, estimator *unitCostEstimator, prove func([]xmss.CPubKey, []xmss.CSig, []xmss.ChildProof, [32]byte, uint32) ([]byte, error)) ([]*types.SignedAggregatedAttestation, []store.PayloadKV, []store.AttestationDeleteKey, bool, groupSkips) {
 	skips := groupSkips{}
 	if snap == nil || cache == nil || snap.headState == nil {
 		return nil, nil, nil, false, skips
@@ -217,15 +231,26 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 	if estimator == nil {
 		estimator = newUnitCostEstimator()
 	}
+	if maxGroups <= 0 {
+		maxGroups = MaxGroupsPerSession
+	}
 
 	var newAggregates []*types.SignedAggregatedAttestation
 	var payloadEntries []store.PayloadKV
 	var keysToDelete []store.AttestationDeleteKey
 	truncated := false
 	attempted := false
+	attempts := 0
 
 	groups := orderedGroups(snap, skips)
 	for i, group := range groups {
+		// Groups that never reached the prover cost nothing, so the cap counts
+		// proof attempts rather than loop iterations.
+		if attempts >= maxGroups {
+			truncated = true
+			skips.addN(metrics.AggGroupSkipSessionCap, len(groups)-i)
+			break
+		}
 		// An over-budget observation must not prevent every future attempt:
 		// without a successful proof the estimator cannot recalibrate. Allow
 		// one attempt while time remains; subsequent attempts use the estimate.
@@ -357,6 +382,7 @@ func aggregateFromSnapshotWithProver(snap *Snapshot, cache *xmss.PubKeyCache, de
 				return
 			}
 			attempted = true
+			attempts++
 			aggStart := time.Now()
 			proofBytes, err := prove(*rawPubkeysBuf, *rawSigsBuf, *childProofsBuf, dataRootHash, slot)
 			// Charge virtual time for the proving cost Shadow would otherwise not
