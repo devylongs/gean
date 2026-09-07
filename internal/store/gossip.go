@@ -164,22 +164,20 @@ func entryTargetSlot(entry *AttestationDataEntry) uint64 {
 	return entry.Data.Slot
 }
 
-// PruneStaleBelow drops signatures whose target sits below cutoff, skipping any
-// data root named in protected. It exists for the case PruneBelow cannot cover:
-// while finalization is stalled the finalized slot does not move, so a
-// finalization-keyed prune never fires and the pool grows for as long as the
-// stall lasts.
+// PruneStaleBelow drops signatures whose target sits below cutoff. It exists for
+// the case PruneBelow cannot cover: while finalization is stalled the finalized
+// slot does not move, so a finalization-keyed prune never fires and the pool
+// grows for as long as the stall lasts.
 //
-// Roots that already carry an aggregated payload are protected, because their
-// raw signatures are the coverage an in-flight or published aggregate was built
-// from.
-func (m *AttestationSignatureMap) PruneStaleBelow(cutoff uint64, protected map[[32]byte]bool) int {
+// ream and grandine exempt roots that carry an aggregated payload from their
+// equivalent sweeps, to keep the coverage a live aggregate was built from. That
+// exemption cannot apply here: a root's signature entry and its payload entry
+// hold the same AttestationData, so they share a target slot and go stale in the
+// same sweep. Nothing would ever be exempt.
+func (m *AttestationSignatureMap) PruneStaleBelow(cutoff uint64) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.pruneLocked(func(root [32]byte, entry *AttestationDataEntry) bool {
-		if protected[root] {
-			return false
-		}
+	return m.pruneLocked(func(_ [32]byte, entry *AttestationDataEntry) bool {
 		return entry == nil || entry.Data == nil || entryTargetSlot(entry) < cutoff
 	})
 }

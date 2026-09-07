@@ -56,9 +56,7 @@ func PruneOnFinalization(s *ConsensusStore, fc *forkchoice.ForkChoice, oldFinali
 // them.
 //
 // Below the finalized slot this is a no-op: PruneOnFinalization already covers
-// that range, and a cutoff at or under it would only repeat work. Data roots
-// holding an aggregated payload keep their raw signatures, since those are the
-// coverage a live aggregate was built from.
+// that range, and a cutoff at or under it would only repeat work.
 func PruneStaleAttestationPools(s *ConsensusStore, headSlot, finalizedSlot uint64) {
 	if s == nil || headSlot <= AttestationRetentionSlots {
 		return
@@ -68,11 +66,9 @@ func PruneStaleAttestationPools(s *ConsensusStore, headSlot, finalizedSlot uint6
 		return
 	}
 
-	protected := make(map[[32]byte]bool)
-	s.NewPayloads.Roots(protected)
-	s.KnownPayloads.Roots(protected)
-
-	prunedSigs := s.AttestationSignatures.PruneStaleBelow(cutoff, protected)
+	// All three pools key on the same target slot, so a data root leaves them
+	// together and the order here does not matter.
+	prunedSigs := s.AttestationSignatures.PruneStaleBelow(cutoff)
 	prunedKnown := s.KnownPayloads.PruneStaleBelow(cutoff)
 	prunedNew := s.NewPayloads.PruneStaleBelow(cutoff)
 

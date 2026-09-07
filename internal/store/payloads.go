@@ -199,19 +199,6 @@ func outranksVote(slotA uint64, rootA [32]byte, slotB uint64, rootB [32]byte) bo
 	return bytes.Compare(rootA[:], rootB[:]) > 0
 }
 
-// Roots reports the data roots the buffer currently holds. Callers use it to
-// protect a root's raw signatures while an aggregate built from them is live.
-func (pb *PayloadBuffer) Roots(into map[[32]byte]bool) {
-	if pb == nil || into == nil {
-		return
-	}
-	pb.mu.Lock()
-	defer pb.mu.Unlock()
-	for root := range pb.data {
-		into[root] = true
-	}
-}
-
 func (pb *PayloadBuffer) PruneBelow(finalizedSlot uint64) int {
 	return pb.pruneBelow(finalizedSlot, false)
 }

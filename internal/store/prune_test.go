@@ -47,22 +47,28 @@ func TestPruneStaleAttestationPools(t *testing.T) {
 		}
 	})
 
-	t.Run("keeps roots an aggregate was built from", func(t *testing.T) {
+	t.Run("takes a root's payload with its signatures", func(t *testing.T) {
 		s := newStore()
-		head := uint64(5000)
-		withPayload := root(3)
-		s.AttestationSignatures.Insert(withPayload, data(100), 0, [types.SignatureSize]byte{})
+		stale := root(3)
+		s.AttestationSignatures.Insert(stale, data(100), 0, [types.SignatureSize]byte{})
 		participants := types.NewBitlistSSZ(1)
 		types.BitlistSet(participants, 0)
-		s.NewPayloads.Push(withPayload, data(100), &types.SingleMessageAggregate{
+		s.NewPayloads.Push(stale, data(100), &types.SingleMessageAggregate{
 			Participants: participants,
 			Proof:        []byte{1},
 		})
 
-		store.PruneStaleAttestationPools(s, head, 50)
+		store.PruneStaleAttestationPools(s, 5000, 50)
 
-		if _, ok := s.AttestationSignatures.Snapshot()[withPayload]; !ok {
-			t.Fatal("swept the coverage a live aggregate was built from")
+		// Signature entry and payload entry share one AttestationData, so they
+		// share a target slot and go stale together. Neither can outlive the
+		// other, which is why the sweep needs no exemption for payload-bearing
+		// roots the way ream's and grandine's do.
+		if _, ok := s.AttestationSignatures.Snapshot()[stale]; ok {
+			t.Fatal("stale signatures survived")
+		}
+		if s.NewPayloads.Len() != 0 {
+			t.Fatal("stale payload survived alongside its signatures")
 		}
 	})
 

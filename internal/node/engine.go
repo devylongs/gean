@@ -41,7 +41,11 @@ type Engine struct {
 	CommitteeCount uint64
 	// AggregateSubnetIDs are the attestation subnets this node subscribes to as
 	// an aggregator. Empty means every subnet. Set by the caller after New.
-	AggregateSubnetIDs  []uint64
+	AggregateSubnetIDs []uint64
+	// expectedVoters caches how many validators this node can hear from in a
+	// slot. Its inputs are fixed once the registry is known, and it is read on
+	// every attestation arrival.
+	expectedVoters      uint64
 	Shadow              shadow.Rates
 	Pending             *pending.BlockBuffer
 	PendingAttestations *pending.AttestationBuffer

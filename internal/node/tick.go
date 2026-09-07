@@ -216,9 +216,16 @@ func earlyAggregationQuorum(voters uint64) int {
 // and the head start it exists to give is never taken. With one committee, or an
 // aggregator subscribed to every subnet, this is the whole registry as before.
 func (e *Engine) expectedVotersPerSlot() uint64 {
+	// Read once per verified attestation, so it is cached rather than recounted.
+	// The validator set is fixed at genesis in lean devnet and the subnet
+	// subscription is fixed at startup, so the answer cannot change.
+	if e.expectedVoters != 0 {
+		return e.expectedVoters
+	}
 	total := e.numValidators
 	committees := e.CommitteeCount
 	if committees <= 1 || len(e.AggregateSubnetIDs) == 0 || uint64(len(e.AggregateSubnetIDs)) >= committees {
+		e.expectedVoters = total
 		return total
 	}
 	subscribed := make(map[uint64]bool, len(e.AggregateSubnetIDs))
@@ -231,6 +238,7 @@ func (e *Engine) expectedVotersPerSlot() uint64 {
 			voters++
 		}
 	}
+	e.expectedVoters = voters
 	return voters
 }
 
