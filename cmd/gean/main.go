@@ -92,6 +92,7 @@ func run(cfg config) error {
 		VerifyAggregatedSignatures: cfg.ShadowVerifyAggregatedSignaturesRate,
 	}
 	n := node.New(s, fc, p2pHost, inputs.keyManager, aggCtl, cfg.CommitteeCount, shadowRates)
+	n.AggregateSubnetIDs = cfg.AggregateSubnetIDs
 	startNodeNetworking(ctx, n, s, p2pHost, inputs.bootnodes)
 
 	apiAddr, metricsAddr := startHTTPServers(cfg, s, fc, aggCtl)

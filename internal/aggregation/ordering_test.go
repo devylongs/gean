@@ -32,7 +32,7 @@ func snapshotWithTargets(targets map[byte]uint64) *Snapshot {
 // the votes nearest the finalized frontier are proven before the head-most ones.
 func TestOrderedGroupsFrontierFirst(t *testing.T) {
 	snap := snapshotWithTargets(map[byte]uint64{1: 104, 2: 100, 3: 102, 4: 101, 5: 103})
-	ordered := orderedGroups(snap)
+	ordered := orderedGroups(snap, groupSkips{})
 
 	want := []uint64{100, 101, 102, 103, 104}
 	if len(ordered) != len(want) {
@@ -55,7 +55,7 @@ func TestTruncatingAggregatorKeepsFrontier(t *testing.T) {
 	const headMost = uint64(104)
 	snap := snapshotWithTargets(map[byte]uint64{1: frontier, 2: 101, 3: 102, 4: 103, 5: headMost})
 
-	ordered := orderedGroups(snap)
+	ordered := orderedGroups(snap, groupSkips{})
 
 	// A budget that fits only the first two proofs.
 	const budget = 2
@@ -95,7 +95,7 @@ func TestOrderedGroupsSkipsJustifiedTargets(t *testing.T) {
 		},
 	}
 
-	ordered := orderedGroups(snap)
+	ordered := orderedGroups(snap, groupSkips{})
 	if len(ordered) != 1 {
 		t.Fatalf("groups=%d, want 1 (justified target skipped)", len(ordered))
 	}
@@ -108,9 +108,9 @@ func TestOrderedGroupsSkipsJustifiedTargets(t *testing.T) {
 // root, so the order is stable across snapshots regardless of map iteration.
 func TestOrderedGroupsDeterministicTiebreak(t *testing.T) {
 	snap := snapshotWithTargets(map[byte]uint64{9: 50, 3: 50, 7: 50})
-	first := orderedGroups(snap)
+	first := orderedGroups(snap, groupSkips{})
 	for range 5 {
-		again := orderedGroups(snap)
+		again := orderedGroups(snap, groupSkips{})
 		for i := range first {
 			if first[i].dataRoot != again[i].dataRoot {
 				t.Fatalf("non-deterministic order at %d", i)

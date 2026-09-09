@@ -200,11 +200,29 @@ func outranksVote(slotA uint64, rootA [32]byte, slotB uint64, rootB [32]byte) bo
 }
 
 func (pb *PayloadBuffer) PruneBelow(finalizedSlot uint64) int {
+	return pb.pruneBelow(finalizedSlot, false)
+}
+
+// PruneStaleBelow drops entries whose target sits strictly below cutoff. Unlike
+// PruneBelow it is not keyed on finalization, so it still clears the buffer
+// while finalization is stalled — the one situation where nothing else does.
+func (pb *PayloadBuffer) PruneStaleBelow(cutoff uint64) int {
+	return pb.pruneBelow(cutoff, true)
+}
+
+func (pb *PayloadBuffer) pruneBelow(bound uint64, strict bool) int {
 	if pb == nil {
 		return 0
 	}
 	pb.mu.Lock()
 	defer pb.mu.Unlock()
+
+	stale := func(slot uint64) bool {
+		if strict {
+			return slot < bound
+		}
+		return slot <= bound
+	}
 
 	pruned := 0
 	var newOrder [][32]byte
@@ -213,7 +231,7 @@ func (pb *PayloadBuffer) PruneBelow(finalizedSlot uint64) int {
 		if !ok {
 			continue
 		}
-		if !validPayloadEntry(entry) || entry.Data.Target == nil || entry.Data.Target.Slot <= finalizedSlot {
+		if !validPayloadEntry(entry) || entry.Data.Target == nil || stale(entry.Data.Target.Slot) {
 			pb.totalProofs -= len(entry.Proofs)
 			delete(pb.data, dataRoot)
 			pruned++

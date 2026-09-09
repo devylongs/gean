@@ -32,13 +32,20 @@ const (
 )
 
 type Engine struct {
-	Store               *store.ConsensusStore
-	FC                  *forkchoice.ForkChoice
-	P2P                 *p2p.Host
-	Keys                *xmss.KeyManager
-	AggCtl              *role.Controller
-	DutyGate            *dutygate.Gate
-	CommitteeCount      uint64
+	Store          *store.ConsensusStore
+	FC             *forkchoice.ForkChoice
+	P2P            *p2p.Host
+	Keys           *xmss.KeyManager
+	AggCtl         *role.Controller
+	DutyGate       *dutygate.Gate
+	CommitteeCount uint64
+	// AggregateSubnetIDs are the attestation subnets this node subscribes to as
+	// an aggregator. Empty means every subnet. Set by the caller after New.
+	AggregateSubnetIDs []uint64
+	// expectedVoters caches how many validators this node can hear from in a
+	// slot. Its inputs are fixed once the registry is known, and it is read on
+	// every attestation arrival.
+	expectedVoters      uint64
 	Shadow              shadow.Rates
 	Pending             *pending.BlockBuffer
 	PendingAttestations *pending.AttestationBuffer
@@ -75,6 +82,11 @@ type Engine struct {
 	// on the dispatch loop (queue on onBlock, clear on receive/exhaustion), so no lock.
 	fetchInFlight  map[[32]byte]bool
 	topicMeshSizes atomic.Pointer[map[string]int]
+
+	// coveragePreMerge holds the new-payload participants captured before the
+	// tick promoted them, keyed by the slot each vote is for. Read only on the
+	// dispatch loop, which is also the only writer.
+	coveragePreMerge map[uint64][][]byte
 
 	// aggregatedSlot is the last slot for which an aggregation session was
 	// dispatched, so the early (attestation-arrival) path and the interval-2

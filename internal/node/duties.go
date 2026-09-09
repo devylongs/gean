@@ -65,6 +65,22 @@ func (e *Engine) produceAttestations(slot uint64) {
 	}
 }
 
+// proposingAt reports whether one of this node's validators proposes at slot,
+// given an already-resolved validator count. getOurProposer decodes the head
+// state to learn that count; callers holding a state should use this instead
+// rather than pay a second SSZ decode on the tick loop.
+func (e *Engine) proposingAt(slot uint64, numValidators uint64) bool {
+	if e.Keys == nil || numValidators == 0 {
+		return false
+	}
+	for _, vid := range e.Keys.ValidatorIDs() {
+		if types.IsProposer(slot, vid, numValidators) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) getOurProposer(slot uint64) (uint64, bool) {
 	if e.Keys == nil {
 		return 0, false

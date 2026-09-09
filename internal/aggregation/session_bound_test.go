@@ -25,13 +25,13 @@ func TestEstimatorSeedGroupDuration(t *testing.T) {
 func TestEstimatorTracksGroupCost(t *testing.T) {
 	e := newUnitCostEstimator()
 	// First observation seeds the running value directly.
-	e.observeGroup(2 * time.Second)
+	e.observeGroup(2*time.Second, 0)
 	if got := e.nextGroupDuration(); got < 1900*time.Millisecond || got > 2100*time.Millisecond {
 		t.Fatalf("after first observe nextGroupDuration=%v, want ~2s", got)
 	}
 	// Repeated 2s observations converge toward 2s.
 	for range 10 {
-		e.observeGroup(2 * time.Second)
+		e.observeGroup(2*time.Second, 0)
 	}
 	if got := e.nextGroupDuration(); got < 1900*time.Millisecond || got > 2100*time.Millisecond {
 		t.Fatalf("converged nextGroupDuration=%v, want ~2s", got)
@@ -44,7 +44,7 @@ func TestEstimatorTracksGroupCost(t *testing.T) {
 func TestSessionBoundRefusesUnfinishableProof(t *testing.T) {
 	e := newUnitCostEstimator()
 	for range 5 {
-		e.observeGroup(2 * time.Second)
+		e.observeGroup(2*time.Second, 0)
 	}
 	// 500ms left, but a group now costs ~2s: must refuse.
 	if 500*time.Millisecond >= e.nextGroupDuration() {

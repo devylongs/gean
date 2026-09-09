@@ -47,6 +47,16 @@ func fallbackSelection(
 	return attestationForProof(data, proof), copyProof(proof), true, err
 }
 
+// maxMergedProofs bounds how many proofs one proposal merges. Merge builds a
+// proof from children alone, with no raw signatures to anchor it, so every proof
+// selected here is a recursive input and the merge is the most expensive shape
+// the prover handles. It also runs on the proposal path holding the proving gate
+// at priority, where an overrun delays the block itself.
+//
+// Two matches the cap aggregation applies to a group. Beyond that the marginal
+// coverage a third proof adds is not worth another recursive input.
+const maxMergedProofs = 2
+
 func selectProofs(proofs []*types.SingleMessageAggregate) []*types.SingleMessageAggregate {
 	proofs = usableProofs(proofs)
 	covered := make(map[uint64]bool)
@@ -56,7 +66,7 @@ func selectProofs(proofs []*types.SingleMessageAggregate) []*types.SingleMessage
 	}
 
 	var selected []*types.SingleMessageAggregate
-	for {
+	for len(selected) < maxMergedProofs {
 		bestIdx := -1
 		bestNew := 0
 		for idx, proof := range proofs {

@@ -167,6 +167,7 @@ func (e *Engine) acceptProposal(ctx context.Context, result *proposalResult) {
 	attestationCount := 0
 	if block.Body != nil {
 		attestationCount = len(block.Body.Attestations)
+		e.reportProposalCoverage(block.Body.Attestations)
 	}
 	logger.Info(logger.Validator, "proposed block slot=%d block_root=0x%x attestations=%d",
 		block.Slot, result.blockRoot, attestationCount)
