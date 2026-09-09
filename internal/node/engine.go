@@ -69,10 +69,16 @@ type Engine struct {
 	RecoveryCh            chan *types.SignedBlock
 	ProvingGate           *proving.Gate
 
-	// storageWorkers tracks the background goroutines that touch the storage
-	// backend, so shutdown can join them before the database is closed. A
-	// sampler still running after Close calls into a closed Pebble instance,
-	// which panics rather than erroring.
+	// storageWorkers tracks the storage-size sampler so shutdown can join it
+	// before the database is closed: a sampler still running after Close calls
+	// into a closed Pebble instance, which panics rather than erroring.
+	//
+	// Scope is deliberately narrow. Other workers read storage too — the
+	// aggregation, proposal, recovery and attestation workers, and the fetch
+	// batcher — and none of them is joined either. That is a pre-existing
+	// shutdown weakness, not one this sampler introduced, and closing it means
+	// deciding how long shutdown may block on in-flight proving work. Tracked
+	// separately; do not read this WaitGroup as covering them.
 	storageWorkers sync.WaitGroup
 
 	lastTick time.Time
@@ -153,9 +159,12 @@ func New(
 	return e
 }
 
-// WaitForStorageWorkers blocks until every background goroutine that reads the
-// storage backend has returned. Callers must invoke it after cancelling the
-// context and before closing the backend.
+// WaitForStorageWorkers blocks until the storage-size sampler has returned.
+// Callers must invoke it after cancelling the context and before closing the
+// backend.
+//
+// It does not cover every storage-reading goroutine — see the storageWorkers
+// field for what is and is not tracked.
 func (e *Engine) WaitForStorageWorkers() {
 	e.storageWorkers.Wait()
 }

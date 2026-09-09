@@ -109,9 +109,10 @@ func run(cfg config) error {
 
 	waitForShutdown(cancel)
 
-	// Join the background goroutines that read storage before the deferred
-	// backend.Close runs. Cancellation alone is not enough: a sampler mid-round
-	// when the database closes calls into a closed Pebble instance, which panics.
+	// Join the storage-size sampler before the deferred backend.Close runs.
+	// Cancellation alone is not enough: a sampler mid-round when the database
+	// closes calls into a closed Pebble instance, which panics. Other workers
+	// that read storage are still not joined — a pre-existing gap.
 	n.WaitForStorageWorkers()
 	return nil
 }
