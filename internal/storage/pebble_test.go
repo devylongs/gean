@@ -320,9 +320,30 @@ func TestPebbleEstimateTableBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	size := b.EstimateTableBytes(TableMetadata)
-	if size != uint64(len("k")+len("value")) {
-		t.Fatalf("metadata size=%d, want %d", size, len("k")+len("value"))
+	// EstimateTableBytes reports SST bytes for the table's key range, so it sees
+	// nothing until the memtable is flushed. That is the documented contract:
+	// the gauge is coarse and sampled on a slow cadence, and the alternative —
+	// summing every key and value — is a full-table scan.
+	if size := b.EstimateTableBytes(TableMetadata); size != 0 {
+		t.Fatalf("unflushed metadata size=%d, want 0", size)
+	}
+
+	if err := b.db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	metaSize := b.EstimateTableBytes(TableMetadata)
+	if metaSize == 0 {
+		t.Fatal("metadata size=0 after flush, want non-zero")
+	}
+
+	// Each table is estimated over its own prefix range, so a write to one must
+	// not be attributed to another. TableBlockHeaders was never written.
+	if size := b.EstimateTableBytes(TableBlockHeaders); size != 0 {
+		t.Fatalf("unwritten table size=%d, want 0", size)
+	}
+	if statesSize := b.EstimateTableBytes(TableStates); statesSize == 0 {
+		t.Fatal("states size=0 after flush, want non-zero")
 	}
 }
 

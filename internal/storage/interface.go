@@ -31,6 +31,12 @@ type Iterator interface {
 
 	Value() []byte
 
+	// Err reports why iteration stopped, or nil if it reached the end. Next
+	// returning false means "no more entries" *or* "iteration failed", and a
+	// caller that treats those the same silently accepts a partial scan as a
+	// complete one.
+	Err() error
+
 	Close()
 }
 

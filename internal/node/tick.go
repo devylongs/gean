@@ -22,6 +22,7 @@ func (e *Engine) onTick() {
 		metrics.ObserveTickIntervalDuration(now.Sub(e.lastTick).Seconds())
 	}
 	e.lastTick = now
+	e.lastTickMs.Store(now.UnixMilli())
 
 	timestampMs := uint64(now.UnixMilli())
 
@@ -90,14 +91,27 @@ func (e *Engine) dispatchAggregationCycle(nowMs, currentSlot uint64, isAggregato
 	if currentSlot == e.aggregatedSlot {
 		return
 	}
-	// The sync-lag duty gate is spec-defined only for block and attestation; gean
-	// also applies it to aggregation. Aggregating on a stale view only produces
-	// best-effort aggregates that get dropped, so gating when lagging is safe and
-	// surfaces the not_synced skip reason.
-	if e.DutyGate != nil && !e.DutyGate.Decide("aggregation", currentSlot, e.Store.HeadSlot(), e.networkSeenSlot()) {
-		metrics.IncAggregatorSkipped(metrics.AggregatorSkipNotSynced)
-		return
-	}
+	// Aggregation is deliberately NOT behind the sync-lag duty gate, unlike block
+	// production and attestation.
+	//
+	// gean used to gate it, reasoning that aggregates built on a stale view get
+	// dropped anyway. That holds with several aggregators. It inverts with one:
+	// the sole aggregator withholds the aggregates the network is waiting on at
+	// exactly the moment it is furthest behind, so nothing justifies, nothing
+	// finalizes, finalization pruning never runs, and the lag that closed the
+	// gate gets worse. Observed on devnet-5 as not_synced climbing to ~4,100 per
+	// node with justification frozen; stopping two lagging nodes advanced
+	// justification 1,520 slots in five minutes.
+	//
+	// The spec agrees: leanSpec timeline.py gates interval 2 on `is_aggregator`
+	// alone. So does ethlambda, which has a duty gate and applies it to
+	// attestation and proposal but not to aggregation. lantern has no gate. Only
+	// ream gates aggregation.
+	//
+	// The work is bounded without the gate: a session has a slot-anchored
+	// deadline and MaxGroupsPerSession, so an aggregate built on a stale view
+	// costs one bounded proving budget and is dropped by peers — strictly better
+	// than not producing one at all.
 	if e.Store.AttestationSignatures.Len() == 0 && e.Store.NewPayloads.Len() == 0 {
 		metrics.IncAggregatorSkipped(metrics.AggregatorSkipOther)
 		return

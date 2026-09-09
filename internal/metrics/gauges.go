@@ -12,6 +12,14 @@ var (
 	metricCurrentSlot = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "lean_current_slot", Help: "Current slot from wall clock",
 	})
+	// metricTickAge is the stall detector. lean_tick_interval_duration_seconds is
+	// a histogram observed *inside* onTick, so it records nothing at all while the
+	// dispatch loop is blocked — the failure it should report makes it go quiet
+	// rather than spike, and its top bucket is 1.6s besides. This gauge is written
+	// from a separate goroutine and keeps climbing for as long as the loop is stuck.
+	metricTickAge = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "lean_tick_last_age_seconds", Help: "Seconds since the dispatch loop last began a tick",
+	})
 	metricSafeTargetSlot = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "lean_safe_target_slot", Help: "Safe target slot for attestation",
 	})

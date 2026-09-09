@@ -63,6 +63,15 @@ func run(cfg config) error {
 		return err
 	}
 
+	// Recover the stored-block high-water mark before any duty runs. Doing it
+	// here rather than lazily keeps the full-table scan off the dispatch loop
+	// entirely, and surfaces a read failure at startup instead of leaving the
+	// duty gate to act on an understated mark.
+	if err := s.SeedMaxStoredBlockSlot(); err != nil {
+		logger.Error(logger.Node, "seed max stored block slot: %v", err)
+		return err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -99,5 +108,11 @@ func run(cfg config) error {
 	logger.Info(logger.Node, "gean started: api=%s metrics=%s aggregator=%v", apiAddr, metricsAddr, cfg.IsAggregator)
 
 	waitForShutdown(cancel)
+
+	// Join the storage-size sampler before the deferred backend.Close runs.
+	// Cancellation alone is not enough: a sampler mid-round when the database
+	// closes calls into a closed Pebble instance, which panics. Other workers
+	// that read storage are still not joined — a pre-existing gap.
+	n.WaitForStorageWorkers()
 	return nil
 }

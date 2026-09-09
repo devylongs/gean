@@ -28,20 +28,26 @@ func (p *PebbleBackend) BeginWrite() (WriteBatch, error) {
 	return &pebbleWriteBatch{batch: p.db.NewBatch()}, nil
 }
 
+// EstimateTableBytes reports approximate on-disk (SST) bytes for a table.
+//
+// This asks Pebble's version metadata for the size of the table's key range
+// rather than reading the table. The previous implementation iterated every
+// entry and summed len(key)+len(value), which on the states and signed-block
+// tables meant gigabytes of decompressed reads per call — and it was called for
+// all six tables on every block import, on the dispatch goroutine.
+//
+// The number this returns is not the same number: it is compressed SST bytes
+// for the range, not logical live bytes, and it excludes anything still in the
+// memtable. For a size gauge that is the more useful figure anyway.
 func (p *PebbleBackend) EstimateTableBytes(table Table) uint64 {
-	rv, err := p.BeginRead()
-	if err != nil {
+	lower := tableKey(table, nil)
+	upper := prefixUpperBound(lower)
+	if upper == nil {
 		return 0
 	}
-	it, err := rv.PrefixIterator(table, nil)
+	total, err := p.db.EstimateDiskUsage(lower, upper)
 	if err != nil {
 		return 0
-	}
-	defer it.Close()
-
-	var total uint64
-	for it.Next() {
-		total += uint64(len(it.Key()) + len(it.Value()))
 	}
 	return total
 }
@@ -183,6 +189,16 @@ func (it *pebbleIterator) Value() []byte {
 		return nil
 	}
 	return bytes.Clone(it.iter.Value())
+}
+
+// Err surfaces a mid-iteration failure. pebble.Iterator.Next returns false both
+// at the end of the range and on an I/O error, so without this a truncated scan
+// is indistinguishable from a complete one.
+func (it *pebbleIterator) Err() error {
+	if it.iter == nil {
+		return nil
+	}
+	return it.iter.Error()
 }
 
 func (it *pebbleIterator) Close() {
