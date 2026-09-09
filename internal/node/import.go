@@ -76,7 +76,6 @@ func (e *Engine) importKnownParentBlock(
 	e.dispatchRecovery(signedBlock)
 
 	e.FC.OnBlock(block.Slot, blockRoot, parentRoot)
-	e.recordTableBytes()
 
 	e.updateHead()
 	e.Pending.ClearDepth(blockRoot)
@@ -84,9 +83,14 @@ func (e *Engine) importKnownParentBlock(
 	e.collectPendingChildren(blockRoot, queue)
 }
 
-// recordTableBytes refreshes the per-table storage-size gauge after a block is
-// persisted. Runs on the single-threaded import path, so the estimate reflects
-// the just-applied write with no locking concerns.
+// recordTableBytes refreshes the per-table storage-size gauge.
+//
+// This used to run on the import path, once per block. Both halves of that were
+// wrong: the backend estimate was a full scan of every table (see
+// storage.PebbleBackend.EstimateTableBytes), and the import path is the dispatch
+// goroutine, so the cost landed directly on the slot clock. A storage-size gauge
+// is coarse by nature and does not need per-block resolution; it is sampled on
+// its own goroutine now, like the gossip-mesh gauge.
 func (e *Engine) recordTableBytes() {
 	if e.Store == nil || e.Store.Backend == nil {
 		return

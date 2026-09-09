@@ -70,6 +70,10 @@ type Engine struct {
 
 	lastTick time.Time
 
+	// lastTickMs mirrors lastTick for the stall sampler, which runs on its own
+	// goroutine precisely so it still reports while the dispatch loop is blocked.
+	lastTickMs atomic.Int64
+
 	warnedMissingJustified [32]byte
 
 	// maxSeenGossipSlot is the highest plausible slot heard on gossip, whether

@@ -188,7 +188,7 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 		Data:     data,
 		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 	}
-	knownRoots := map[[32]byte]bool{parentRoot: true}
+	knownRoots := RootSet{parentRoot: true}
 	if err := payloadBuildIssue(workingState, knownRoots, payload); err != nil {
 		t.Fatalf("expected payload to be buildable, got %v", err)
 	}
@@ -204,7 +204,7 @@ func TestPayloadBuildIssueUsesTransitionVoteRules(t *testing.T) {
 	offHead := *data
 	forkHead := [32]byte{0xfe}
 	offHead.Head = &types.Checkpoint{Slot: data.Head.Slot, Root: forkHead}
-	if err := payloadBuildIssue(workingState, map[[32]byte]bool{parentRoot: true, forkHead: true},
+	if err := payloadBuildIssue(workingState, RootSet{parentRoot: true, forkHead: true},
 		AttestationPayload{DataRoot: dataRoot, Data: &offHead, Proofs: payload.Proofs}); !errors.Is(err, ErrPayloadHeadOffChain) {
 		t.Fatalf("payload build issue=%v, want ErrPayloadHeadOffChain", err)
 	} else if !IsExpectedSkip(err) {
@@ -279,7 +279,7 @@ func TestPayloadBuildIssueSkipsStaleSource(t *testing.T) {
 		Data:     &staleSource,
 		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},
 	}
-	err = payloadBuildIssue(workingState, map[[32]byte]bool{parentRoot: true}, payload)
+	err = payloadBuildIssue(workingState, RootSet{parentRoot: true}, payload)
 	if !errors.Is(err, ErrPayloadSourceNotCurrentJustified) {
 		t.Fatalf("payload build issue=%v, want ErrPayloadSourceNotCurrentJustified", err)
 	}
@@ -301,7 +301,7 @@ func TestPayloadBuildIssueAllowsGenesisSelfVote(t *testing.T) {
 		Target: &types.Checkpoint{Root: root},
 	}
 	dataRoot := hashAttestationData(t, data)
-	err := payloadBuildIssue(state, map[[32]byte]bool{root: true}, AttestationPayload{
+	err := payloadBuildIssue(state, RootSet{root: true}, AttestationPayload{
 		DataRoot: dataRoot,
 		Data:     data,
 		Proofs:   []*types.SingleMessageAggregate{mockProof([]uint64{0})},

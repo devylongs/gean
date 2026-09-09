@@ -248,18 +248,12 @@ func (e *Engine) produceBlockWithSignatures(slot, validatorIndex uint64) (*types
 		return nil, nil, fmt.Errorf("validator %d not proposer for slot %d", validatorIndex, slot)
 	}
 
-	knownBlockRoots, err := e.Store.BlockRoots()
-	if err != nil {
-		metrics.IncBlockBuildingFailures()
-		return nil, nil, fmt.Errorf("load block roots: %w", err)
-	}
-
 	result, err := blockbuilder.Build(blockbuilder.Input{
 		HeadState:       headState,
 		Slot:            slot,
 		ProposerIndex:   validatorIndex,
 		ParentRoot:      headRoot,
-		KnownBlockRoots: knownBlockRoots,
+		KnownBlockRoots: blockbuilder.KnownRootsFunc(e.Store.HasBlockHeader),
 		Payloads:        payloadsFromEntries(e.Store.KnownPayloads.Entries()),
 		ProofMerger:     attestationproof.NewMerger(e.Store.PubKeyCache),
 	})

@@ -17,6 +17,14 @@ const SyncLagSlots = 2
 // sample, not a control input, so it runs well below the slot cadence.
 const gossipMeshSampleInterval = 10 * time.Second
 
+// tickAgeSampleInterval paces the stall detector. A slot is 4s, so a second is
+// fine-grained enough to distinguish a slow tick from a stopped loop.
+const tickAgeSampleInterval = time.Second
+
+// storageSizeSampleInterval paces the per-table storage-size gauge. Table sizes
+// move on compaction and pruning, not per block, so a minute is ample.
+const storageSizeSampleInterval = time.Minute
+
 func (e *Engine) updateSyncStatus(currentSlot uint64) {
 	status := e.computeSyncStatus(currentSlot)
 	metrics.SetSyncStatus(status.String())
@@ -65,7 +73,6 @@ func (e *Engine) logChainStatus(currentSlot uint64) {
 
 	gossipSigs := e.Store.AttestationSignatures.Len()
 	knownPayloads := e.Store.KnownPayloads.Len()
-	statesCount := e.Store.StatesCount()
 	fcNodesCount := 0
 	if e.FC != nil {
 		fcNodesCount = e.FC.Len()
@@ -80,13 +87,13 @@ func (e *Engine) logChainStatus(currentSlot uint64) {
 		}
 	}
 
-	logger.Info(logger.Chain, "\n\n+===============================================================+\n  CHAIN STATUS: Current Slot: %d | Head Slot: %d | Behind: %d\n+---------------------------------------------------------------+\n  Connected Peers:    %d\n+---------------------------------------------------------------+\n  Head Block Root:    0x%x\n  Parent Block Root:  0x%x\n  State Root:         0x%x\n+---------------------------------------------------------------+\n  Latest Justified:   Slot %6d | Root: 0x%x\n  Latest Finalized:   Slot %6d | Root: 0x%x\n+---------------------------------------------------------------+\n  Gossip Sigs: %d | Known Payloads: %d | States: %d | FC Nodes: %d\n+---------------------------------------------------------------+\n  Topics:%s\n+===============================================================+\n",
+	logger.Info(logger.Chain, "\n\n+===============================================================+\n  CHAIN STATUS: Current Slot: %d | Head Slot: %d | Behind: %d\n+---------------------------------------------------------------+\n  Connected Peers:    %d\n+---------------------------------------------------------------+\n  Head Block Root:    0x%x\n  Parent Block Root:  0x%x\n  State Root:         0x%x\n+---------------------------------------------------------------+\n  Latest Justified:   Slot %6d | Root: 0x%x\n  Latest Finalized:   Slot %6d | Root: 0x%x\n+---------------------------------------------------------------+\n  Gossip Sigs: %d | Known Payloads: %d | FC Nodes: %d\n+---------------------------------------------------------------+\n  Topics:%s\n+===============================================================+\n",
 		currentSlot, headSlot, behind,
 		peerCount,
 		headRoot, parentRoot, stateRoot,
 		justified.Slot, justified.Root,
 		finalized.Slot, finalized.Root,
-		gossipSigs, knownPayloads, statesCount, fcNodesCount,
+		gossipSigs, knownPayloads, fcNodesCount,
 		meshInfo)
 }
 
@@ -108,6 +115,51 @@ func (e *Engine) runGossipMeshGauge(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.sampleGossipMesh()
+		}
+	}
+}
+
+// runTickAgeGauge publishes how long it has been since the dispatch loop last
+// began a tick. It must live off that loop: the existing tick-interval histogram
+// is observed inside onTick, so a fully blocked loop produces no observations at
+// all and the metric goes silent exactly when it should be alarming.
+func (e *Engine) runTickAgeGauge(ctx context.Context) {
+	ticker := time.NewTicker(tickAgeSampleInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			last := e.lastTickMs.Load()
+			if last == 0 {
+				continue
+			}
+			age := time.Since(time.UnixMilli(last)).Seconds()
+			if age < 0 {
+				age = 0
+			}
+			metrics.SetTickAge(age)
+		}
+	}
+}
+
+// runStorageSizeGauge samples the per-table storage-size gauge off the tick
+// loop. Even with a metadata-based estimate this is not work the dispatch
+// goroutine should carry, and a size gauge loses nothing to a slow cadence.
+func (e *Engine) runStorageSizeGauge(ctx context.Context) {
+	if e.Store == nil || e.Store.Backend == nil {
+		return
+	}
+	ticker := time.NewTicker(storageSizeSampleInterval)
+	defer ticker.Stop()
+	e.recordTableBytes()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			e.recordTableBytes()
 		}
 	}
 }

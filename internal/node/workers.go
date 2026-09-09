@@ -14,6 +14,8 @@ func (e *Engine) startWorkers(ctx context.Context) {
 	go e.runAttestationWorker(ctx)
 	go e.runAggregationWorker(ctx)
 	go e.runGossipMeshGauge(ctx)
+	go e.runStorageSizeGauge(ctx)
+	go e.runTickAgeGauge(ctx)
 }
 
 func (e *Engine) runAttestationWorker(ctx context.Context) {

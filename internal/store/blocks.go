@@ -25,6 +25,18 @@ func (s *ConsensusStore) GetBlockHeader(root [32]byte) *types.BlockHeader {
 	return h
 }
 
+// HasBlockHeader reports whether a block header is stored, without decoding it.
+// The proposal path asks this a handful of times per block; it used to answer
+// the same question by materialising every root in the table into a map.
+func (s *ConsensusStore) HasBlockHeader(root [32]byte) bool {
+	rv, err := s.beginRead("has block header")
+	if err != nil {
+		return false
+	}
+	val, err := rv.Get(storage.TableBlockHeaders, root[:])
+	return err == nil && val != nil
+}
+
 func (s *ConsensusStore) InsertBlockHeader(root [32]byte, header *types.BlockHeader) {
 	if err := s.PutBlockHeader(root, header); err != nil {
 		logger.Error(logger.Store, "%v", err)
@@ -39,7 +51,11 @@ func (s *ConsensusStore) PutBlockHeader(root [32]byte, header *types.BlockHeader
 	if err != nil {
 		return fmt.Errorf("insert block header: marshal: %w", err)
 	}
-	return s.putOne(storage.TableBlockHeaders, root[:], data, "insert block header")
+	if err := s.putOne(storage.TableBlockHeaders, root[:], data, "insert block header"); err != nil {
+		return err
+	}
+	s.ObserveStoredBlockSlot(header.Slot)
+	return nil
 }
 
 func (s *ConsensusStore) BlockRoots() (map[[32]byte]bool, error) {
@@ -174,7 +190,27 @@ func (s *ConsensusStore) HeadSlot() uint64 {
 	return h.Slot
 }
 
+// MaxStoredBlockSlot returns the highest slot of any stored block header.
+//
+// This is read on the tick loop by the duty gate, up to three times a slot. It
+// used to iterate TableBlockHeaders and decode every value, which is O(chain
+// length) and — because the header's first SSZ field is the slot — forced the
+// sstable value blocks to be read rather than just the keys. On a 22,600-block
+// chain that was one of several full-table scans starving the dispatch loop.
+//
+// The answer is now a high-water mark maintained on insert. The table is scanned
+// once, lazily, to seed it after a restart: a process that starts with an
+// existing database must not report slot 0 and read the whole network as stalled.
 func (s *ConsensusStore) MaxStoredBlockSlot() uint64 {
+	s.maxBlockSlotSeed.Do(func() {
+		s.ObserveStoredBlockSlot(s.scanMaxStoredBlockSlot())
+	})
+	return s.maxBlockSlot.Load()
+}
+
+// scanMaxStoredBlockSlot is the O(n) fallback, used only to seed the high-water
+// mark once per process.
+func (s *ConsensusStore) scanMaxStoredBlockSlot() uint64 {
 	rv, err := s.beginRead("max stored block slot")
 	if err != nil {
 		return 0
