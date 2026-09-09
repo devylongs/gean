@@ -218,3 +218,20 @@ func TestSelectCopiesCallerOwnedData(t *testing.T) {
 		t.Fatalf("proof data first byte=0x%x, want copied 0x01", sig.Proof[0])
 	}
 }
+
+// Merge builds a proof from children alone, with no raw signatures, so every
+// proof selected here is a recursive input; it runs on the proposal path holding
+// the proving gate at priority, where an overrun delays the block itself.
+func TestSelectProofsCapsMergedProofs(t *testing.T) {
+	proof := func(ids ...uint64) *types.SingleMessageAggregate {
+		return &types.SingleMessageAggregate{Participants: types.BitlistFromIndices(ids), Proof: []byte{1}}
+	}
+	// Four proofs, each adding fresh coverage, so nothing but the cap stops the
+	// greedy loop.
+	got := selectProofs([]*types.SingleMessageAggregate{
+		proof(0, 1), proof(2, 3), proof(4, 5), proof(6, 7),
+	})
+	if len(got) != maxMergedProofs {
+		t.Fatalf("selected=%d, want %d", len(got), maxMergedProofs)
+	}
+}

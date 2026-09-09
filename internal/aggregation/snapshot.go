@@ -7,22 +7,27 @@ import (
 
 type Snapshot struct {
 	headState    *types.State
+	slot         uint64
 	attSigs      map[[32]byte]*store.AttestationDataEntry
 	newEntries   map[[32]byte]*store.PayloadEntry
 	knownEntries map[[32]byte]*store.PayloadEntry
 }
 
-func SnapshotInputs(s *store.ConsensusStore) *Snapshot {
-	if s.AttestationSignatures.Len() == 0 && s.NewPayloads.Len() == 0 {
+// SnapshotInputs copies the aggregation inputs out of the store. headState is
+// supplied by the caller rather than fetched here: GetState decodes the whole
+// state from SSZ on every call, and the dispatcher has already resolved it to
+// decide whether to run at all.
+func SnapshotInputs(s *store.ConsensusStore, headState *types.State, slot uint64) *Snapshot {
+	if headState == nil {
 		return nil
 	}
-	headState := s.GetState(s.Head())
-	if headState == nil {
+	if s.AttestationSignatures.Len() == 0 && s.NewPayloads.Len() == 0 {
 		return nil
 	}
 
 	snap := &Snapshot{
 		headState:    headState,
+		slot:         slot,
 		attSigs:      s.AttestationSignatures.Snapshot(),
 		newEntries:   make(map[[32]byte]*store.PayloadEntry),
 		knownEntries: make(map[[32]byte]*store.PayloadEntry),

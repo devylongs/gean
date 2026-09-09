@@ -45,6 +45,13 @@ func (e *Engine) onGossipAttestation(att *types.SignedAttestation) {
 		return
 	}
 
+	// A duplicate arrival cannot change the answer, and verification is the
+	// expensive step. The store's own record of what it holds serves as the
+	// seen set, so it is pruned along with the signatures themselves.
+	if e.Store.AttestationSignatures.Has(dataRoot, att.ValidatorID) {
+		return
+	}
+
 	metrics.IncPqSigAttestationSigsTotal()
 	verifyStart := time.Now()
 	err = attestation.VerifyGossipAttestation(e.Store, att.ValidatorID, att.Data, dataRoot, att.Signature[:])

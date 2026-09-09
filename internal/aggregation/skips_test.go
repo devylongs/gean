@@ -29,7 +29,7 @@ func TestAggregateResolvesSignersWithoutTargetState(t *testing.T) {
 		},
 	}
 
-	_, _, _, _, skips := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, shadow.Rates{}, newUnitCostEstimator())
+	_, _, _, _, skips := aggregateFromSnapshot(snap, xmss.NewPubKeyCache(), time.Time{}, MaxGroupsPerSession, shadow.Rates{}, newUnitCostEstimator())
 
 	// No group may be dropped for a reason that no longer exists; these groups
 	// carry no signatures, so they fall out as too-few-signers instead.
