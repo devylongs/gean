@@ -9,7 +9,6 @@ var syncStatusLabels = []string{"idle", "syncing", "synced", unknownLabel}
 
 const (
 	AggregatorSkipNotAggregator = "not_aggregator"
-	AggregatorSkipNotSynced     = "not_synced"
 	AggregatorSkipMissingState  = "missing_state"
 	AggregatorSkipSpawnFailed   = "spawn_failed"
 	AggregatorSkipOther         = "other"
@@ -17,7 +16,6 @@ const (
 
 var aggregatorSkipReasons = []string{
 	AggregatorSkipNotAggregator,
-	AggregatorSkipNotSynced,
 	AggregatorSkipMissingState,
 	AggregatorSkipSpawnFailed,
 	AggregatorSkipOther,

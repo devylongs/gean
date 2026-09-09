@@ -27,7 +27,6 @@ func TestCountCounterWrappersIgnoreNonPositiveValues(t *testing.T) {
 func TestIncAggregatorSkippedUsesBoundedReasons(t *testing.T) {
 	reasons := []string{
 		AggregatorSkipNotAggregator,
-		AggregatorSkipNotSynced,
 		AggregatorSkipMissingState,
 		AggregatorSkipSpawnFailed,
 		AggregatorSkipOther,
