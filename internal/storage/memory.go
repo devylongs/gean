@@ -151,6 +151,10 @@ type sliceIterator struct {
 	pos     int
 }
 
+// Err always returns nil: the in-memory backend materialises its entries up
+// front, so iteration cannot fail part-way.
+func (it *sliceIterator) Err() error { return nil }
+
 func (it *sliceIterator) Next() bool {
 	it.pos++
 	return it.pos < len(it.entries)

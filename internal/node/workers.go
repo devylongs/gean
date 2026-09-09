@@ -14,8 +14,15 @@ func (e *Engine) startWorkers(ctx context.Context) {
 	go e.runAttestationWorker(ctx)
 	go e.runAggregationWorker(ctx)
 	go e.runGossipMeshGauge(ctx)
-	go e.runStorageSizeGauge(ctx)
 	go e.runTickAgeGauge(ctx)
+
+	// The storage-size sampler reads the backend, so shutdown has to join it
+	// before Close: see Engine.WaitForStorageWorkers.
+	e.storageWorkers.Add(1)
+	go func() {
+		defer e.storageWorkers.Done()
+		e.runStorageSizeGauge(ctx)
+	}()
 }
 
 func (e *Engine) runAttestationWorker(ctx context.Context) {

@@ -61,8 +61,16 @@ type ConsensusStore struct {
 	// header no longer lowers the answer. That errs toward reporting the network
 	// as alive, which is the direction that keeps the gate closed rather than
 	// opening it onto a dead fork.
-	maxBlockSlot     atomic.Uint64
-	maxBlockSlotSeed sync.Once
+	maxBlockSlot atomic.Uint64
+	// maxBlockSlotSeeded latches only once a seeding scan has completed without
+	// error. A sync.Once would latch on failure too, and a scan that returns 0
+	// because the read view could not be opened — or that stopped part-way
+	// through the table — would permanently understate the mark. That is not
+	// merely a bad gauge: an understated mark inflates the duty gate's computed
+	// network lag, which can trip the network-stall carve-out and let the node
+	// resume duties on a stale head.
+	maxBlockSlotSeeded atomic.Bool
+	maxBlockSlotSeedMu sync.Mutex
 }
 
 // ObserveStoredBlockSlot raises the stored-block high-water mark. Safe from any

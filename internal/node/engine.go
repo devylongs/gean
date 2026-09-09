@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -67,6 +68,12 @@ type Engine struct {
 	ProposalResultCh      chan *proposalResult
 	RecoveryCh            chan *types.SignedBlock
 	ProvingGate           *proving.Gate
+
+	// storageWorkers tracks the background goroutines that touch the storage
+	// backend, so shutdown can join them before the database is closed. A
+	// sampler still running after Close calls into a closed Pebble instance,
+	// which panics rather than erroring.
+	storageWorkers sync.WaitGroup
 
 	lastTick time.Time
 
@@ -144,6 +151,13 @@ func New(
 	}
 	e.configureP2PHooks()
 	return e
+}
+
+// WaitForStorageWorkers blocks until every background goroutine that reads the
+// storage backend has returned. Callers must invoke it after cancelling the
+// context and before closing the backend.
+func (e *Engine) WaitForStorageWorkers() {
+	e.storageWorkers.Wait()
 }
 
 func (e *Engine) Run(ctx context.Context) {

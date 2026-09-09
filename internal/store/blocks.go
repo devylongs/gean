@@ -202,22 +202,50 @@ func (s *ConsensusStore) HeadSlot() uint64 {
 // once, lazily, to seed it after a restart: a process that starts with an
 // existing database must not report slot 0 and read the whole network as stalled.
 func (s *ConsensusStore) MaxStoredBlockSlot() uint64 {
-	s.maxBlockSlotSeed.Do(func() {
-		s.ObserveStoredBlockSlot(s.scanMaxStoredBlockSlot())
-	})
+	if err := s.SeedMaxStoredBlockSlot(); err != nil {
+		logger.Error(logger.Store, "seed max stored block slot: %v", err)
+	}
 	return s.maxBlockSlot.Load()
 }
 
+// SeedMaxStoredBlockSlot recovers the high-water mark from disk. It is a no-op
+// once a scan has completed successfully.
+//
+// Call it during startup, before the dispatch loop runs: that removes the one
+// remaining full-table scan from the duty path, and it means a failure is
+// reported somewhere a person will see it rather than swallowed on a tick.
+// A failed attempt does not latch, so a later call retries.
+func (s *ConsensusStore) SeedMaxStoredBlockSlot() error {
+	if s == nil || s.maxBlockSlotSeeded.Load() {
+		return nil
+	}
+	s.maxBlockSlotSeedMu.Lock()
+	defer s.maxBlockSlotSeedMu.Unlock()
+	if s.maxBlockSlotSeeded.Load() {
+		return nil
+	}
+
+	max, err := s.scanMaxStoredBlockSlot()
+	if err != nil {
+		return err
+	}
+	s.ObserveStoredBlockSlot(max)
+	s.maxBlockSlotSeeded.Store(true)
+	return nil
+}
+
 // scanMaxStoredBlockSlot is the O(n) fallback, used only to seed the high-water
-// mark once per process.
-func (s *ConsensusStore) scanMaxStoredBlockSlot() uint64 {
+// mark. It reports an error rather than a partial answer: a truncated scan looks
+// exactly like an empty table, and caching that as the mark is worse than
+// retrying.
+func (s *ConsensusStore) scanMaxStoredBlockSlot() (uint64, error) {
 	rv, err := s.beginRead("max stored block slot")
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	it, err := rv.PrefixIterator(storage.TableBlockHeaders, nil)
 	if err != nil {
-		return 0
+		return 0, fmt.Errorf("iterate block headers: %w", err)
 	}
 	defer it.Close()
 
@@ -232,7 +260,10 @@ func (s *ConsensusStore) scanMaxStoredBlockSlot() uint64 {
 			max = slot
 		}
 	}
-	return max
+	if err := it.Err(); err != nil {
+		return 0, fmt.Errorf("iterate block headers: %w", err)
+	}
+	return max, nil
 }
 
 func (s *ConsensusStore) InsertLiveChainEntry(slot uint64, root, parentRoot [32]byte) {

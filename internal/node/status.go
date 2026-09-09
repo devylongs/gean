@@ -153,13 +153,13 @@ func (e *Engine) runStorageSizeGauge(ctx context.Context) {
 	}
 	ticker := time.NewTicker(storageSizeSampleInterval)
 	defer ticker.Stop()
-	e.recordTableBytes()
+	e.recordTableBytes(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.recordTableBytes()
+			e.recordTableBytes(ctx)
 		}
 	}
 }

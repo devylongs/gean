@@ -191,6 +191,16 @@ func (it *pebbleIterator) Value() []byte {
 	return bytes.Clone(it.iter.Value())
 }
 
+// Err surfaces a mid-iteration failure. pebble.Iterator.Next returns false both
+// at the end of the range and on an I/O error, so without this a truncated scan
+// is indistinguishable from a complete one.
+func (it *pebbleIterator) Err() error {
+	if it.iter == nil {
+		return nil
+	}
+	return it.iter.Error()
+}
+
 func (it *pebbleIterator) Close() {
 	it.iter.Close()
 }

@@ -1,6 +1,8 @@
 package node
 
 import (
+	"context"
+
 	"github.com/geanlabs/gean/internal/blockprocessor"
 	"github.com/geanlabs/gean/internal/logger"
 	"github.com/geanlabs/gean/internal/metrics"
@@ -91,11 +93,17 @@ func (e *Engine) importKnownParentBlock(
 // goroutine, so the cost landed directly on the slot clock. A storage-size gauge
 // is coarse by nature and does not need per-block resolution; it is sampled on
 // its own goroutine now, like the gossip-mesh gauge.
-func (e *Engine) recordTableBytes() {
+func (e *Engine) recordTableBytes(ctx context.Context) {
 	if e.Store == nil || e.Store.Backend == nil {
 		return
 	}
 	for _, table := range storage.AllTables {
+		// Bail between tables so a cancelled shutdown does not spend a whole
+		// round on a database that is about to close. Responsiveness only:
+		// Engine.WaitForStorageWorkers is what actually makes Close safe.
+		if ctx.Err() != nil {
+			return
+		}
 		metrics.SetTableBytes(string(table), e.Store.Backend.EstimateTableBytes(table))
 	}
 }
