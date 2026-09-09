@@ -99,10 +99,18 @@ func (e *Engine) updateFinalizedFromHead(headRoot [32]byte) {
 	if derived.Slot > oldSlot {
 		metrics.IncFinalization("success")
 		logger.Info(logger.Forkchoice, "finalized advanced slot=%d root=0x%x", derived.Slot, derived.Root)
+		// Order matters and is not interchangeable. PruneOnFinalization asks fork
+		// choice which roots to delete (GetCanonicalAnalysis: the ancestors below
+		// the new finalized root, and every branch that is neither ancestor nor
+		// descendant of it). FC.Prune removes exactly those nodes from the
+		// ProtoArray. Pruning fork choice first therefore leaves the analysis with
+		// nothing to report — canonical is length 1 so canonical[1:] is empty, and
+		// nonCanonical is empty — so the database prune silently deletes nothing
+		// and TableStates/TableBlockHeaders grow for the life of the chain.
+		store.PruneOnFinalization(e.Store, e.FC, oldSlot, derived.Slot, derived.Root)
 		if derived.Slot > 0 {
 			e.FC.Prune(derived.Root)
 		}
-		store.PruneOnFinalization(e.Store, e.FC, oldSlot, derived.Slot, derived.Root)
 		e.discardFinalizedPending(derived.Slot)
 	}
 }
