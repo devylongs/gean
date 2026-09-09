@@ -6,6 +6,7 @@ func SetNodeInfo(name, version string) {
 func SetNodeStartTime(t float64)      { setNonNegative(metricNodeStartTime, t) }
 func SetHeadSlot(s uint64)            { metricHeadSlot.Set(float64(s)) }
 func SetCurrentSlot(s uint64)         { metricCurrentSlot.Set(float64(s)) }
+func SetTickAge(seconds float64)      { metricTickAge.Set(seconds) }
 func SetSafeTargetSlot(s uint64)      { metricSafeTargetSlot.Set(float64(s)) }
 func SetLatestJustifiedSlot(s uint64) { metricLatestJustifiedSlot.Set(float64(s)) }
 func SetLatestFinalizedSlot(s uint64) { metricLatestFinalizedSlot.Set(float64(s)) }

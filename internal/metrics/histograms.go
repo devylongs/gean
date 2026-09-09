@@ -121,6 +121,15 @@ var (
 		Help:    "Elapsed time between clock ticks in seconds",
 		Buckets: []float64{0.4, 0.6, 0.75, 0.8, 0.805, 0.81, 0.815, 0.82, 0.825, 0.85, 0.9, 1.0, 1.2, 1.6},
 	})
+	// metricDispatchEventDuration times each case of the dispatch select, so a
+	// slow handler can be attributed rather than only observed as a late tick.
+	// Buckets run well past a slot: the point is to size a stall, and the
+	// tick-interval histogram's 1.6s ceiling could not.
+	metricDispatchEventDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "lean_dispatch_event_duration_seconds",
+		Help:    "Time the dispatch loop spent handling one event, by event kind",
+		Buckets: []float64{0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 0.8, 1.6, 4, 10, 30, 120, 600},
+	}, []string{"event"})
 	metricProvingDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "lean_proving_duration_seconds",
 		Help:    "Recursive proof operation duration",
